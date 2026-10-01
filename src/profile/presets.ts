@@ -376,6 +376,27 @@ export default (p, R) => R.profile('Auffahrt').rank(7)
   .scatter('delineator', { spacing: 50, offset: 0.6, side: 'both' });
 `;
 
+export const KREISEL = `
+// Kreisel: einspuriger Ring (Einbahn), Bordstein zur Mittelinsel; Zufahrten haben Kein Vortritt (Rang 6 > Rang der Zufahrten)
+export const params = {
+  lane:   { type: 'float', label: 'Fahrbahnbreite', min: 3.5, max: 5.5, step: 0.1, default: 4.5 },
+  apron:  { type: 'float', label: 'Überfahrbarer Rand', min: 0, max: 2, step: 0.1, default: 0.0 },
+  lamps:  { type: 'bool',  label: 'Laternen aussen', default: true },
+};
+export default (p, R) => {
+  const prof = R.profile('Kreisel').rank(6)
+    .thickness(0.8).bodyMaterial('subgrade').smooth(3)
+    .both(h => {
+      h.surface(p.lane, 'asphalt', { kind: 'lane', slope: -0.02 }).edgeLine({ back: 0.12, width: 0.12, color: 'white' });
+      if (p.apron > 0.05) h.surface(p.apron, 'granite', { kind: 'shoulder', slope: -0.02 });
+      h.step(0.12, 'curb', { kind: 'curb' }).surface(0.15, 'granite', { kind: 'curb' });
+      h.slope(1.2, -0.08, 'grass', { kind: 'verge' });
+    });
+  if (p.lamps) prof.lamps({ asset: 'lamp', spacing: 28, offset: 1.0, side: 'right' });
+  return prof;
+};
+`;
+
 export const PRESET_SOURCES: Record<string, string> = {
   trampelpfad: TRAMPELPFAD,
   wanderweg: WANDERWEG,
@@ -396,4 +417,5 @@ export const PRESET_SOURCES: Record<string, string> = {
   autostrasse: AUTOSTRASSE,
   autobahn: AUTOBAHN,
   auffahrt: AUFFAHRT,
+  kreisel: KREISEL,
 };

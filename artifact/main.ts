@@ -10,6 +10,8 @@ import { MockStreamTerrain } from '../src/terrain/mockStreamTerrain';
 import { RoadSystem } from '../src/runtime/roadSystem';
 import { RoadMeshLayer } from '../src/mesh/roadMeshLayer';
 import { PropLayer } from '../src/props/propLayer';
+import { IslandLayer } from '../src/props/islandLayer';
+import { SignalLayer } from '../src/props/signalLayer';
 import { BridgeLayer } from '../src/structures/bridgeLayer';
 import { BridgeLibrary } from '../src/structures/library';
 import { ProfileLibrary } from '../src/profile/library';
@@ -22,7 +24,7 @@ import { WaterLibrary } from '../src/water/styleLibrary';
 import { WaterSystem } from '../src/water/system';
 import { WaterLayer } from '../src/water/waterLayer';
 import { bridgePierObstacles } from '../src/water/bridgeObstacles';
-import { waterDemoHeight, waterDemoRoads, waterDemoWaters, WATER_DEMO_VIEWS } from '../src/water/demoScene';
+import { waterDemoHeight, waterDemoNetwork, waterDemoWaters, WATER_DEMO_VIEWS } from '../src/water/demoScene';
 import { RoadEditor } from '../src/editor/roadEditor';
 import { mountEditorPanels } from '../src/editor/panels';
 import { PRECOMPILED } from './precompiled.gen';
@@ -87,8 +89,12 @@ const meshLayer = new RoadMeshLayer(roads, materials);
 scene.add(meshLayer.group);
 const propLayer = new PropLayer(roads, { drawDistance: 600 });
 scene.add(propLayer.group);
+const islandLayer = new IslandLayer(roads, terrain, propLayer.assets, propLayer.materials);
+scene.add(islandLayer.group);
 const bridgeLayer = new BridgeLayer(roads, materials, { drawDistance: 1800 });
 scene.add(bridgeLayer.group);
+const signalLayer = new SignalLayer(roads, { drawDistance: 900 });
+scene.add(signalLayer.group);
 
 const waterSystem = new WaterSystem(terrain, waterLibrary);
 const waterLayer: WaterLayer = new WaterLayer(waterSystem, terrain, materials, { drawDistance: 4200, externalObstacles: bridgePierObstacles(roads, waterSystem) });
@@ -124,7 +130,8 @@ const dock = mountEditorPanels(editor, document.body, { library, materials });
 
 function seedScene(): void {
   const w = waterDemoWaters();
-  editor.model.load({ version: 1, roads: waterDemoRoads(), rivers: w.rivers, lakes: w.lakes });
+  const net = waterDemoNetwork();
+  editor.model.load({ version: 1, roads: net.roads, nodes: net.nodes, rivers: w.rivers, lakes: w.lakes });
   editor.setStatus('Beispielszene geladen', 'info');
 }
 void (async () => {
@@ -300,7 +307,9 @@ renderer.setAnimationLoop(() => {
   waterSystem.resync();
   waterLayer.update(dt, camera.position);
   propLayer.update(camera);
+  islandLayer.update();
   bridgeLayer.update(camera);
+  signalLayer.update(performance.now() / 1000, camera);
   renderer.render(scene, camera);
   if (++frame % 12 === 0) {
     const st = waterSystem.stats();

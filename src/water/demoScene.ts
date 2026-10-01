@@ -3,8 +3,12 @@
 // fall, a side stream that joins it, and a lower lake the river flows into. SIM coordinates.
 
 import { autoLevelRiver } from './autolevel';
-import type { RoadDef } from '../network/types';
+import type { NodeDef, RoadDef, RoadPoint } from '../network/types';
+import { buildRoundabout } from '../network/roundabout';
 import type { LakeDef, RiverDef, RiverPoint } from './types';
+
+/** the level ground of the road test field */
+export const TRAFFIC_PAD = { x: 4380, z: 2350, flat: 700, blend: 380, y: 782 } as const;
 
 const smooth = (a: number, b: number, v: number): number => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
 
@@ -32,7 +36,11 @@ export function waterDemoHeight(x: number, z: number): number {
   const hills = Math.sin(x / 260) * Math.sin(z / 310) * 26 + Math.sin(x / 97 + z / 131) * 8 + Math.sin(z / 53 - x / 71) * 3;
   const top = plateau + noise(1) * (0.3 + 1.9 * rough) + 25 * smooth(2500, 2200, x) - Math.max(0, x - 2900) * 0.066 + hills * rough;
   const floor = valley - (x - cliffX) * 0.018 + noise(0.6) * 1.4 + walls * 0.8 + (Math.sin(x / 190 + 1) * Math.sin(z / 240) * 12 + Math.sin(x / 73 - z / 97) * 3) * calm;
-  return top + (floor - top) * cliff + walls * (1 - cliff) * 0.5;
+  const h = top + (floor - top) * cliff + walls * (1 - cliff) * 0.5;
+  // a level basin for the town and the motorway (see waterDemoNetwork)
+  const pad = TRAFFIC_PAD;
+  const w = 1 - smooth(pad.flat, pad.flat + pad.blend, Math.hypot(x - pad.x, z - pad.z));
+  return h + (pad.y - h) * w;
 }
 
 const P = (x: number, z: number, extra: Partial<RiverPoint> = {}): RiverPoint => ({ x, y: 0, z, ...extra });
@@ -89,16 +97,54 @@ export const WATER_DEMO_VIEWS: Record<string, { label: string; cam: [number, num
   step: { label: 'Kleiner Fall', cam: [3950, 820, -3070, 3995, 795, -3015] },
   lowerLake: { label: 'Unterer See', cam: [4640, 830, -3200, 4830, 764, -3010] },
   bridge: { label: 'Brücke über den Fluss', cam: [4215, 822, -3090, 4150, 786, -3000] },
+  hub: { label: 'Verkehrsfeld', cam: [3750, 1000, -1900, 4380, 783, -2330] },
+  roundabout: { label: 'Kreisel', cam: [4230, 815, -2395, 4150, 783, -2480] },
+  signals: { label: 'Ampelkreuzung', cam: [4605, 800, -2545, 4550, 783, -2480] },
+  tee: { label: 'Dorf-T', cam: [4210, 800, -2150, 4150, 782, -2205] },
+  motorway: { label: 'Autobahn + Ausfahrt', cam: [4150, 835, -1880, 4380, 782, -2040] },
   confluence: { label: 'Zusammenfluss', cam: [3960, 830, -3090, 3900, 795, -3028] },
 };
 
-/** a road that crosses the valley river on a bridge (the bridge piers stand in the water); the deck clears the ground at both ends */
-export function waterDemoRoads(ground: (x: number, z: number) => number = waterDemoHeight): RoadDef[] {
-  const x = 4150;
-  const deck = Math.round((Math.max(ground(x, 2945), ground(x, 3055), ground(x, 3000) + 4) + 1.2) * 2) / 2;
-  const pts: Array<[number, boolean]> = [[2640, false], [2800, false], [2945, true], [3000, true], [3055, true], [3200, false], [3360, false]];
-  return [{
-    id: 'talstrasse', name: 'Talstrasse', profile: 'hauptstrasse', bridge: 'balkenbruecke',
-    points: pts.map(([z, bridge]) => (bridge ? { x, y: deck, z, mode: 'bridge' as const } : { x, y: ground(x, z), z })),
-  }];
+/**
+ * The road test field on the level ground south of the river: the Talstrasse comes over the bridge into a roundabout; from there a village
+ * street with a T-junction, a main road to a signalised crossing, a dead-end side road — and a motorway to the south with an exit that
+ * climbs to the crossing. (Everything in SIM coordinates; non-bridge points follow the terrain.)
+ */
+export function waterDemoNetwork(ground: (x: number, z: number) => number = waterDemoHeight): { roads: RoadDef[]; nodes: NodeDef[] } {
+  const g = (x: number, z: number): RoadPoint => ({ x, y: ground(x, z), z });
+  const gs = (list: Array<[number, number]>): RoadPoint[] => list.map(([x, z]) => g(x, z));
+  const bridgeDeck = Math.round((Math.max(ground(4150, 2945), ground(4150, 3055), ground(4150, 3000) + 4) + 1.2) * 2) / 2;
+  const bp = (z: number): RoadPoint => ({ x: 4150, y: bridgeDeck, z, mode: 'bridge' });
+
+  const rb = buildRoundabout({
+    id: 'kreisel', x: 4150, z: 2480, y: ground(4150, 2480), radius: 24,
+    arms: [
+      { angle: Math.PI / 2, profile: 'hauptstrasse', name: 'Talstrasse', road: { bridge: 'balkenbruecke' }, points: [g(4150, 3360), g(4150, 3200), bp(3055), bp(3000), bp(2945), g(4150, 2800), g(4150, 2650)] },
+      { angle: 0, profile: 'hauptstrasse', name: 'Hauptstrasse', road: { startNode: 'sig' }, points: gs([[4550, 2480], [4350, 2480]]) },
+      { angle: -Math.PI / 2, profile: 'dorfstrasse', name: 'Dorfstrasse', road: { startNode: 'tee' }, points: gs([[4150, 2200], [4150, 2340]]) },
+      { angle: Math.PI, profile: 'nebenstrasse', name: 'Feldweg', length: 170 },
+    ],
+  });
+  const nodes: NodeDef[] = [
+    ...rb.nodes,
+    { id: 'sig', x: 4550, y: ground(4550, 2480), z: 2480, control: 'signals', crosswalks: 'all' },
+    { id: 'tee', x: 4150, y: ground(4150, 2200), z: 2200 },
+    { id: 'ab', x: 4300, y: ground(4300, 1992), z: 1992, control: 'none' },
+    { id: 'ramp', x: 4550, y: ground(4550, 2262), z: 2262 },
+  ];
+  const roads: RoadDef[] = [
+    ...rb.roads,
+    // signalised crossing: the main road continues east, a village street crosses it
+    { id: 'haupt-ost', name: 'Hauptstrasse (Ost)', profile: 'hauptstrasse', points: gs([[4550, 2480], [4700, 2480], [4860, 2510]]), startNode: 'sig' },
+    { id: 'dorf-nord', name: 'Dorfstrasse (Nord)', profile: 'dorfstrasse', points: gs([[4550, 2720], [4550, 2600], [4550, 2480]]), endNode: 'sig' },
+    { id: 'dorf-sued', name: 'Dorfstrasse (Süd)', profile: 'dorfstrasse', points: gs([[4550, 2480], [4550, 2370], [4550, 2262]]), startNode: 'sig', endNode: 'ramp' },
+    // village T-junction
+    { id: 'quartier-west', name: 'Quartierstrasse', profile: 'quartierstrasse', points: gs([[3900, 2200], [4030, 2200], [4150, 2200]]), endNode: 'tee' },
+    { id: 'quartier-ost', name: 'Quartierstrasse (2)', profile: 'quartierstrasse', points: gs([[4150, 2200], [4270, 2206], [4400, 2216]]), startNode: 'tee' },
+    // motorway with an exit that leads up to the signalised crossing
+    { id: 'bahn-west', name: 'Autobahn', profile: 'autobahn', points: gs([[3750, 1980], [3950, 1985], [4130, 1990], [4300, 1992]]), endNode: 'ab' },
+    { id: 'bahn-ost', name: 'Autobahn (2)', profile: 'autobahn', points: gs([[4300, 1992], [4500, 2000], [4750, 2015], [5000, 2040]]), startNode: 'ab' },
+    { id: 'ausfahrt', name: 'Ausfahrt', profile: 'auffahrt', points: gs([[4300, 1992], [4385, 2030], [4470, 2100], [4528, 2190], [4550, 2262]]), startNode: 'ab', endNode: 'ramp' },
+  ];
+  return { roads, nodes };
 }

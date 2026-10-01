@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
-  MockStreamTerrain, RoadSystem, RoadDebugLayer, RoadMeshLayer, PropLayer, SignalLayer, BridgeLayer, BridgeLibrary, GeometryBatch, placementMatrix, SIGN_CATALOG, ProfileLibrary, MaterialRegistry, MaterialLibrary,
+  MockStreamTerrain, RoadSystem, RoadDebugLayer, RoadMeshLayer, PropLayer, SignalLayer, BridgeLayer, BridgeLibrary, IslandLayer, GeometryBatch, placementMatrix, SIGN_CATALOG, ProfileLibrary, MaterialRegistry, MaterialLibrary,
   StorageStore, MemoryStore, type RoadDef, type RoadStore,
-  WaterLibrary, WaterSystem, WaterLayer, bridgePierObstacles, waterDemoHeight, waterDemoWaters, waterDemoRoads, WATER_DEMO_VIEWS,
+  WaterLibrary, WaterSystem, WaterLayer, bridgePierObstacles, waterDemoHeight, waterDemoWaters, waterDemoNetwork, WATER_DEMO_VIEWS,
 } from 'roadsystem';
 import { RoadEditor, mountEditorPanels } from 'roadsystem/editor';
 
@@ -78,6 +78,8 @@ scene.add(meshLayer.group);
 const propLayer = new PropLayer(system, { drawDistance: Number(qp.get('propDist') ?? 900) });
 propLayer.group.visible = qp.get('props') !== '0';
 scene.add(propLayer.group);
+const islandLayer = new IslandLayer(system, terrain, propLayer.assets, propLayer.materials);
+scene.add(islandLayer.group);
 const bridgeLayer = new BridgeLayer(system, materials, { drawDistance: Number(qp.get('propDist') ?? 1500) });
 scene.add(bridgeLayer.group);
 // traffic lights follow wall-clock time (?t=12 freezes them at 12 s, ?sigspeed=5 runs them faster)
@@ -142,7 +144,8 @@ void (async () => {
   await editor.load();
   if (qp.get('water') && !editor.model.riverList.length && !editor.model.lakeList.length) {
     const w = waterDemoWaters();
-    editor.model.load({ version: 1, roads: waterDemoRoads(), rivers: w.rivers, lakes: w.lakes });
+  const net = waterDemoNetwork();
+    editor.model.load({ version: 1, roads: net.roads, nodes: net.nodes, rivers: w.rivers, lakes: w.lakes });
     editor.setStatus('Beispiel-Gewässer geladen – noch nicht gespeichert', 'info');
   } else if (!qp.get('water') && !editor.model.list.length && !(await store.loadRoads(LOCATION))) {
     editor.model.load({ version: 1, roads: sampleRoads, nodes: sampleNodes });
@@ -284,6 +287,7 @@ const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   controls.update();
   propLayer.update(camera);
+  islandLayer.update();
   bridgeLayer.update(camera);
   signalLayer.update(frozenT ?? (performance.now() / 1000) * sigSpeed, camera);
   // the "player" is the orbit target; the terrain streams around it (sim z = -three z)
