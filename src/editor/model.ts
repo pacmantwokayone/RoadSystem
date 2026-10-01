@@ -10,12 +10,14 @@
 import { cloneNode, cloneRoad, sanitizeRoadsDocument } from '../network/doc';
 import { normalizeNetwork } from '../network/graph';
 import type { NodeDef, RoadDef, RoadsDocument } from '../network/types';
+import { cloneLake, cloneRiver, normalizeWaters, sanitizeWaters, type LakeDef, type RiverDef } from '../water/types';
 import { ROADS_DOC_VERSION } from '../network/types';
 
 export type ModelEvent =
   | { type: 'road'; road: RoadDef }          // added or replaced
   | { type: 'remove'; id: string }
   | { type: 'nodes' }                        // the node list changed
+  | { type: 'water' }                        // rivers or lakes changed
   | { type: 'reset' }                        // whole document replaced
   | { type: 'changed' }                      // exactly once after every change of the network
   | { type: 'history' };                     // undo/redo availability or dirty state changed
@@ -23,16 +25,54 @@ export type ModelEvent =
 export interface Snapshot {
   readonly roads: readonly RoadDef[];
   readonly nodes: readonly NodeDef[];
+  readonly rivers: readonly RiverDef[];
+  readonly lakes: readonly LakeDef[];
 }
 
 /** Mutable working copy handed to `transact`; arrays are private copies, objects must be replaced not mutated. */
 export class NetworkDraft {
   roads: RoadDef[];
   nodes: NodeDef[];
+  rivers: RiverDef[];
+  lakes: LakeDef[];
 
-  constructor(snap: Snapshot) {
+  constructor(snap: Pick<Snapshot, 'roads' | 'nodes'> & Partial<Snapshot>) {
     this.roads = snap.roads.slice();
     this.nodes = snap.nodes.slice();
+    this.rivers = (snap.rivers ?? []).slice();
+    this.lakes = (snap.lakes ?? []).slice();
+  }
+
+  river(id: string): RiverDef | undefined { return this.rivers.find((r) => r.id === id); }
+  setRiver(r: RiverDef): void {
+    const i = this.rivers.findIndex((x) => x.id === r.id);
+    if (i >= 0) this.rivers[i] = r; else this.rivers.push(r);
+  }
+  removeRiver(id: string): void { this.rivers = this.rivers.filter((r) => r.id !== id); }
+  editRiver(id: string, fn: (draft: RiverDef) => void): RiverDef | undefined {
+    const cur = this.river(id);
+    if (!cur) return undefined;
+    const d = cloneRiver(cur);
+    fn(d);
+    d.id = id;
+    this.setRiver(d);
+    return d;
+  }
+
+  lake(id: string): LakeDef | undefined { return this.lakes.find((l) => l.id === id); }
+  setLake(l: LakeDef): void {
+    const i = this.lakes.findIndex((x) => x.id === l.id);
+    if (i >= 0) this.lakes[i] = l; else this.lakes.push(l);
+  }
+  removeLake(id: string): void { this.lakes = this.lakes.filter((l) => l.id !== id); }
+  editLake(id: string, fn: (draft: LakeDef) => void): LakeDef | undefined {
+    const cur = this.lake(id);
+    if (!cur) return undefined;
+    const d = cloneLake(cur);
+    fn(d);
+    d.id = id;
+    this.setLake(d);
+    return d;
   }
 
   road(id: string): RoadDef | undefined { return this.roads.find((r) => r.id === id); }
@@ -85,7 +125,7 @@ const HISTORY_LIMIT = 200;
 const sameList = <T,>(a: readonly T[], b: readonly T[]): boolean => a.length === b.length && a.every((x, i) => x === b[i]);
 
 export class RoadModel {
-  private snap: Snapshot = { roads: [], nodes: [] };
+  private snap: Snapshot = { roads: [], nodes: [], rivers: [], lakes: [] };
   private undoStack: Entry[] = [];
   private redoStack: Entry[] = [];
   private listeners = new Set<(e: ModelEvent) => void>();
@@ -101,6 +141,10 @@ export class RoadModel {
 
   get list(): readonly RoadDef[] { return this.snap.roads; }
   get nodeList(): readonly NodeDef[] { return this.snap.nodes; }
+  get riverList(): readonly RiverDef[] { return this.snap.rivers; }
+  get lakeList(): readonly LakeDef[] { return this.snap.lakes; }
+  getRiver(id: string): RiverDef | undefined { return this.snap.rivers.find((r) => r.id === id); }
+  getLake(id: string): LakeDef | undefined { return this.snap.lakes.find((l) => l.id === id); }
   get(id: string): RoadDef | undefined { return this.snap.roads.find((r) => r.id === id); }
   getNode(id: string): NodeDef | undefined { return this.snap.nodes.find((n) => n.id === id); }
 
@@ -123,7 +167,7 @@ export class RoadModel {
 
   load(doc: RoadsDocument): void {
     const clean = sanitizeRoadsDocument(doc);
-    this.snap = { roads: clean.roads, nodes: clean.nodes ?? [] };
+    this.snap = { roads: clean.roads, nodes: clean.nodes ?? [], rivers: clean.rivers ?? [], lakes: clean.lakes ?? [] };
     this.revision = clean.revision;
     this.undoStack = [];
     this.redoStack = [];
@@ -139,6 +183,8 @@ export class RoadModel {
       ...(this.revision !== undefined ? { revision: this.revision } : {}),
       roads: this.snap.roads.map(cloneRoad),
       ...(this.snap.nodes.length ? { nodes: this.snap.nodes.map(cloneNode) } : {}),
+      ...(this.snap.rivers.length ? { rivers: this.snap.rivers.map(cloneRiver) } : {}),
+      ...(this.snap.lakes.length ? { lakes: this.snap.lakes.map(cloneLake) } : {}),
     };
   }
 
@@ -170,10 +216,31 @@ export class RoadModel {
     const draft = new NetworkDraft(this.snap);
     fn(draft);
     const net = normalizeNetwork(draft.roads.filter((r) => r.points.length >= 2), draft.nodes);
-    const after: Snapshot = { roads: net.roads, nodes: net.nodes };
-    if (sameList(after.roads, this.snap.roads) && sameList(after.nodes, this.snap.nodes)) return false;
+    const water = normalizeWaters(draft.rivers.filter((r) => r.points.length >= 2), draft.lakes.filter((l) => l.outline.length >= 3));
+    const after: Snapshot = { roads: net.roads, nodes: net.nodes, rivers: water.rivers, lakes: water.lakes };
+    if (sameList(after.roads, this.snap.roads) && sameList(after.nodes, this.snap.nodes) && sameList(after.rivers, this.snap.rivers) && sameList(after.lakes, this.snap.lakes)) return false;
     this.commit({ label, key: coalesceKey, time: this.now(), before: this.snap, after });
     return true;
+  }
+
+  addRiver(river: RiverDef, label = 'Fluss hinzufügen'): void {
+    this.transact(label, (d) => d.setRiver(cloneRiver(river)));
+  }
+
+  addLake(lake: LakeDef, label = 'See hinzufügen'): void {
+    this.transact(label, (d) => d.setLake(cloneLake(lake)));
+  }
+
+  editRiver(id: string, label: string, fn: (draft: RiverDef) => void, coalesceKey?: string): RiverDef | undefined {
+    if (!this.getRiver(id)) return undefined;
+    this.transact(label, (d) => { d.editRiver(id, fn); }, coalesceKey);
+    return this.getRiver(id);
+  }
+
+  editLake(id: string, label: string, fn: (draft: LakeDef) => void, coalesceKey?: string): LakeDef | undefined {
+    if (!this.getLake(id)) return undefined;
+    this.transact(label, (d) => { d.editLake(id, fn); }, coalesceKey);
+    return this.getLake(id);
   }
 
   addRoad(road: RoadDef, label = 'Straße hinzufügen'): void {
@@ -224,6 +291,7 @@ export class RoadModel {
     }
     for (const id of before.keys()) if (!after.has(id)) this.emit({ type: 'remove', id });
     if (!sameList(a.nodes, b.nodes)) this.emit({ type: 'nodes' });
+    if (!sameList(a.rivers, b.rivers) || !sameList(a.lakes, b.lakes)) this.emit({ type: 'water' });
     this.emit({ type: 'changed' });
   }
 

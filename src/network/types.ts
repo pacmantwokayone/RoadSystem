@@ -73,12 +73,17 @@ export interface RoadDef {
   endNode?: string;
 }
 
+import type { LakeDef, RiverDef } from '../water/types';
+
 export interface RoadsDocument {
   version: 1;
   /** Server-assigned, increases on every successful save (optimistic locking). */
   revision?: number;
   roads: RoadDef[];
   nodes?: NodeDef[];
+  /** hand-drawn rivers, waterfalls and lakes (optional) */
+  rivers?: RiverDef[];
+  lakes?: LakeDef[];
 }
 
 export const ROADS_DOC_VERSION = 1 as const;

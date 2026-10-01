@@ -16,6 +16,10 @@ import * as THREE from 'three';
 import type { TerrainSource } from '../core/terrain';
 
 export type HeightFn = (x: number, z: number) => number;
+/** a terrain modifier: the final height from the base height (rivers, lakes, roads' cuttings …) */
+export type ModifierFn = (x: number, z: number, base: number) => number;
+/** vertex colour of a terrain mesh vertex (sim x/z, final height); write into `out` */
+export type TintFn = (x: number, z: number, y: number, out: THREE.Color) => void;
 
 function hash2(ix: number, iz: number): number {
   let h = Math.imul(ix, 374761393) + Math.imul(iz, 668265263);
@@ -92,6 +96,10 @@ export class MockStreamTerrain implements TerrainSource {
   readonly heightFn: HeightFn;
   /** Subtracted from heightAt() like StreamTerrain.carveAt(); set by tests/tools. */
   carve: ((x: number, z: number) => number) | null = null;
+  /** Changes the height the tiles are generated with (see `invalidate`): rivers carve their beds through this. */
+  modifier: ModifierFn | null = null;
+  /** Colours the terrain mesh (wet banks, …). */
+  tint: TintFn | null = null;
   lodFactor: number;
 
   private readonly tiles = new Map<number, Tile>();
@@ -246,7 +254,7 @@ export class MockStreamTerrain implements TerrainSource {
     const n = t.level <= 1 ? 257 : 129; // like the real pyramid: finer grids on levels 0/1
     const h = new Float32Array(n * n);
     const step = t.size / (n - 1);
-    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) h[r * n + c] = this.heightFn(t.x0 + c * step, t.z0 + r * step);
+    this.fillHeights(t, h, n, step);
     t.heights = h;
     t.grid = n;
     t.state = 'ready';
@@ -255,6 +263,46 @@ export class MockStreamTerrain implements TerrainSource {
       t.mesh.visible = false;
       this.group.add(t.mesh);
     }
+  }
+
+  private fillHeights(t: Tile, h: Float32Array, n: number, step: number): void {
+    const mod = this.modifier;
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) {
+        const x = t.x0 + c * step, z = t.z0 + r * step;
+        const base = this.heightFn(x, z);
+        h[r * n + c] = mod ? mod(x, z, base) : base;
+      }
+    }
+  }
+
+  /** Height without any modifier (what rivers and roads are designed against). */
+  baseHeightAt(x: number, z: number): number {
+    return this.heightFn(x, z);
+  }
+
+  /**
+   * Regenerates the heights (and meshes) of every loaded tile touching the rect — after `modifier` changed there.
+   * No rect = everything. Returns the number of tiles rebuilt.
+   */
+  invalidate(rect?: { minX: number; minZ: number; maxX: number; maxZ: number }): number {
+    let count = 0;
+    for (const t of this.tiles.values()) {
+      if (t.state !== 'ready' || !t.heights) continue;
+      if (rect && (t.x0 > rect.maxX || t.x0 + t.size < rect.minX || t.z0 > rect.maxZ || t.z0 + t.size < rect.minZ)) continue;
+      const n = t.grid;
+      this.fillHeights(t, t.heights, n, t.size / (n - 1));
+      if (this.buildMeshes) {
+        const old = t.mesh;
+        const mesh = this.buildMesh(t);
+        mesh.visible = old ? old.visible : false;
+        if (old) { this.group.remove(old); old.geometry.dispose(); }
+        t.mesh = mesh;
+        this.group.add(mesh);
+      }
+      count++;
+    }
+    return count;
   }
 
   private processNode(t: Tile, px: number, pz: number): boolean {
@@ -311,6 +359,7 @@ export class MockStreamTerrain implements TerrainSource {
         // simple altitude tint: green valleys → grey rock → white peaks
         const k = Math.min(1, Math.max(0, (y - 400) / 1000));
         color.setRGB(0.25 + 0.55 * k, 0.45 + 0.35 * k, 0.2 + 0.65 * k * k);
+        if (this.tint) this.tint(t.x0 + c * step, t.z0 + r * step, y, color);
         col[i * 3] = color.r; col[i * 3 + 1] = color.g; col[i * 3 + 2] = color.b;
       }
     }

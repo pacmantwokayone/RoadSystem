@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
   MockStreamTerrain, RoadSystem, RoadDebugLayer, RoadMeshLayer, PropLayer, SignalLayer, BridgeLayer, BridgeLibrary, GeometryBatch, placementMatrix, SIGN_CATALOG, ProfileLibrary, MaterialRegistry, MaterialLibrary,
   StorageStore, MemoryStore, type RoadDef, type RoadStore,
+  WaterLibrary, WaterSystem, WaterLayer, waterDemoHeight, waterDemoWaters, WATER_DEMO_VIEWS,
 } from 'roadsystem';
 import { RoadEditor, mountEditorPanels } from 'roadsystem/editor';
 
@@ -58,10 +59,13 @@ const demoRivers = qp.get('rivers') ? [{ id: 'aare', name: 'Aare', width: 14, po
 const riverbed = (x: number, z: number): number => 800 - 7 * Math.exp(-(((x - RIVER_X(z)) / 28) ** 2));
 const terrain = new MockStreamTerrain({
   buildMeshes: true, loadLatencyFrames: Number(qp.get('lat') ?? 25),
-  ...(qp.get('rivers') ? { heightFn: riverbed } : qp.get('bridges') ? { heightFn: gorge } : qp.get('cliff') ? { heightFn: ravine } : qp.get('flat') ? { heightFn: () => 800 } : {}),
+  ...(qp.get('water') ? { heightFn: waterDemoHeight } : qp.get('rivers') ? { heightFn: riverbed } : qp.get('bridges') ? { heightFn: gorge } : qp.get('cliff') ? { heightFn: ravine } : qp.get('flat') ? { heightFn: () => 800 } : {}),
 });
 scene.add(terrain.group);
 
+// ?water=1 → hand-drawn waters: lakes, a stream with rapids and a 400 m waterfall, a river, a side stream (see water/demoScene.ts)
+const waterLibrary = new WaterLibrary();
+const waterSystem = new WaterSystem(terrain, waterLibrary);
 const library = new ProfileLibrary();
 const materials = new MaterialRegistry();
 const materialLibrary = new MaterialLibrary(); // materials as editable code; the editor binds the registry to it
@@ -82,6 +86,13 @@ signalLayer.group.visible = qp.get('props') !== '0';
 scene.add(signalLayer.group);
 const frozenT = qp.get('t') !== null ? Number(qp.get('t')) : null;
 const sigSpeed = Number(qp.get('sigspeed') ?? 1);
+const waterLayer = new WaterLayer(waterSystem, terrain, materials, { particles: qp.get('particles') !== '0', drawDistance: Number(qp.get('waterDist') ?? 2600) });
+waterLayer.setLight(sun.position);
+scene.add(waterLayer.group);
+if (qp.get('water')) {
+  const w = waterDemoWaters();
+  waterSystem.setWaters(w.rivers, w.lakes);
+}
 const debug = new RoadDebugLayer(system, terrain);
 debug.group.visible = false;
 scene.add(debug.group);
@@ -133,7 +144,7 @@ const editor = new RoadEditor({
 mountEditorPanels(editor, document.body, { library, materials });
 void (async () => {
   await editor.load();
-  if (!editor.model.list.length && !(await store.loadRoads(LOCATION))) {
+  if (!qp.get('water') && !editor.model.list.length && !(await store.loadRoads(LOCATION))) {
     editor.model.load({ version: 1, roads: sampleRoads, nodes: sampleNodes });
     editor.setStatus('Beispielstraßen geladen – noch nicht gespeichert', 'info');
   }
@@ -269,6 +280,7 @@ addEventListener('resize', () => {
 });
 
 let frame = 0;
+const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   controls.update();
   propLayer.update(camera);
@@ -276,6 +288,8 @@ renderer.setAnimationLoop(() => {
   signalLayer.update(frozenT ?? (performance.now() / 1000) * sigSpeed, camera);
   // the "player" is the orbit target; the terrain streams around it (sim z = -three z)
   terrain.update(controls.target.x, -controls.target.z);
+  waterSystem.resync();
+  waterLayer.update(Math.min(0.1, clock.getDelta()), camera.position);
   editor.update(); // resyncs the road system with an editing-sized budget
   if (debug.group.visible) debug.update();
   renderer.render(scene, camera);
@@ -285,12 +299,13 @@ renderer.setAnimationLoop(() => {
     hud.textContent =
       `RoadSystem – Phase 8 (Brücken)\n` +
       `Straßen: ${editor.model.list.length}   Kreuzungen: ${system.junctionStats().ready}/${system.junctionStats().total}   Chunks: ${st.ready}/${st.chunks}\n` +
-      `Terrain-Kacheln: ${ts.ready} geladen / ${ts.known} bekannt`;
+      `Terrain-Kacheln: ${ts.ready} geladen / ${ts.known} bekannt` +
+      (waterSystem.rivers.length || waterSystem.lakes.length ? `\nWasser: ${waterSystem.stats().ready}/${waterSystem.stats().chunks} Abschnitte, ${waterSystem.stats().lakesReady}/${waterSystem.stats().lakes} Seen` : '');
   }
 });
 
 (window as unknown as Record<string, unknown>).__demo = {
-  editor, library, materials, materialLibrary, propLayer, signalLayer, bridgeLayer, bridgeLibrary,
+  waterSystem, waterLayer, waterLibrary, WATER_DEMO_VIEWS, editor, library, materials, materialLibrary, propLayer, signalLayer, bridgeLayer, bridgeLibrary,
   stats: () => ({ roads: system.stats(), tiles: terrain.loadStats(), meshes: meshLayer.meshCount, propMeshes: propLayer.meshCount, props: propLayer.allPlacements().length, count: editor.model.list.length, nodes: editor.model.nodeList.length, junctions: system.junctionStats(), dirty: editor.isDirty }),
   /** screen position (px) of a sim-space ground point, for scripted clicks */
   project(x: number, z: number): { x: number; y: number } {

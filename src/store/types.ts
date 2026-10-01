@@ -14,6 +14,8 @@ export interface LibraryDocument {
   materials?: Record<string, string>;
   /** bridge type name → source code (optional) */
   bridges?: Record<string, string>;
+  /** water style name → source code (optional) */
+  waters?: Record<string, string>;
 }
 
 export type SaveResult =
@@ -43,6 +45,8 @@ export function sanitizeLibraryDocument(raw: unknown): LibraryDocument {
   if (Object.keys(materials).length) doc.materials = materials;
   const bridges = strings(obj.bridges);
   if (Object.keys(bridges).length) doc.bridges = bridges;
+  const waters = strings(obj.waters);
+  if (Object.keys(waters).length) doc.waters = waters;
   if (typeof obj.revision === 'number' && Number.isFinite(obj.revision)) doc.revision = Math.max(0, Math.floor(obj.revision));
   return doc;
 }

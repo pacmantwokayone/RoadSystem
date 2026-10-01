@@ -75,7 +75,7 @@ export class HttpRoadStore implements RoadStore {
   }
 
   saveRoads(location: string, doc: RoadsDocument, baseRevision?: number): Promise<SaveResult> {
-    return this.post(`${this.base}/roads-save.php`, { location, roads: doc.roads, nodes: doc.nodes ?? [], baseRevision }, baseRevision);
+    return this.post(`${this.base}/roads-save.php`, { location, roads: doc.roads, nodes: doc.nodes ?? [], rivers: doc.rivers ?? [], lakes: doc.lakes ?? [], baseRevision }, baseRevision);
   }
 
   async loadLibrary(): Promise<LibraryDocument | null> {
@@ -85,6 +85,6 @@ export class HttpRoadStore implements RoadStore {
   }
 
   saveLibrary(doc: LibraryDocument, baseRevision?: number): Promise<SaveResult> {
-    return this.post(`${this.base}/roadlib-save.php`, { profiles: doc.profiles, materials: doc.materials ?? {}, bridges: doc.bridges ?? {}, baseRevision }, baseRevision);
+    return this.post(`${this.base}/roadlib-save.php`, { profiles: doc.profiles, materials: doc.materials ?? {}, bridges: doc.bridges ?? {}, waters: doc.waters ?? {}, baseRevision }, baseRevision);
   }
 }

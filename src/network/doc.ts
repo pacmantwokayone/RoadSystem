@@ -7,6 +7,7 @@ import {
   type CrosswalkMode, type ElevationMode, type JunctionControl, type NodeDef, type SignalMode, type RoadDef, type RoadMode, type RoadPoint, type RoadsDocument,
 } from './types';
 import { normalizeNetwork } from './graph';
+import { sanitizeWaters } from '../water/types';
 
 const MODES: RoadMode[] = ['road', 'bridge', 'tunnel', 'gallery'];
 const ELEVS: ElevationMode[] = ['drape', 'fixed'];
@@ -93,6 +94,9 @@ export function sanitizeRoadsDocument(raw: unknown): RoadsDocument {
   }
   const net = normalizeNetwork(roads, nodes);
   const doc: RoadsDocument = { version: ROADS_DOC_VERSION, roads: net.roads, ...(net.nodes.length ? { nodes: net.nodes } : {}) };
+  const waters = sanitizeWaters(obj.rivers, obj.lakes);
+  if (waters.rivers.length) doc.rivers = waters.rivers;
+  if (waters.lakes.length) doc.lakes = waters.lakes;
   const rev = num(obj.revision);
   if (rev !== undefined) doc.revision = Math.max(0, Math.floor(rev));
   return doc;

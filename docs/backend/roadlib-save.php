@@ -1,6 +1,6 @@
 <?php
-// GET  roadlib-save.php                       → { profiles, materials, bridges: { name: source }, revision }   (public)
-// POST roadlib-save.php { profiles, materials?, bridges?, baseRevision? }                                     (editors only)
+// GET  roadlib-save.php                       → { profiles, materials, bridges, waters: { name: source }, revision }   (public)
+// POST roadlib-save.php { profiles, materials?, bridges?, waters?, baseRevision? }                              (editors only)
 // The sources are EXECUTABLE JAVASCRIPT on every client: writes are editor-only (see roads-config.php).
 declare(strict_types=1);
 
@@ -13,7 +13,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     if ($row === null) {
         roads_respond(404, ['error' => 'not found']);
     }
-    roads_respond(200, ['profiles' => (object)($row['doc']['profiles'] ?? []), 'materials' => (object)($row['doc']['materials'] ?? []), 'bridges' => (object)($row['doc']['bridges'] ?? []), 'revision' => $row['revision']]);
+    roads_respond(200, ['profiles' => (object)($row['doc']['profiles'] ?? []), 'materials' => (object)($row['doc']['materials'] ?? []), 'bridges' => (object)($row['doc']['bridges'] ?? []), 'waters' => (object)($row['doc']['waters'] ?? []), 'revision' => $row['revision']]);
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -55,7 +55,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             roads_respond(400, ['error' => "bridge '$name': source missing or too large"]);
         }
     }
-    $res = $docs->save('library', ['profiles' => (object)$profiles, 'materials' => (object)$materials, 'bridges' => (object)$bridges], roads_base_revision($body), $user);
+    $waters = $body['waters'] ?? [];
+    if (!is_array($waters)) {
+        roads_respond(400, ['error' => 'waters must be an object']);
+    }
+    foreach ($waters as $name => $src) {
+        if (!is_string($name) || preg_match('/^[A-Za-z][A-Za-z0-9_-]{0,63}$/', $name) !== 1) {
+            roads_respond(400, ['error' => 'invalid water style name']);
+        }
+        if (!is_string($src) || strlen($src) > ROADS_MAX_PROFILE_BYTES) {
+            roads_respond(400, ['error' => "water style '$name': source missing or too large"]);
+        }
+    }
+    $res = $docs->save('library', ['profiles' => (object)$profiles, 'materials' => (object)$materials, 'bridges' => (object)$bridges, 'waters' => (object)$waters], roads_base_revision($body), $user);
     if ($res['conflict']) {
         roads_respond(409, ['ok' => false, 'conflict' => true, 'revision' => $res['revision']]);
     }
