@@ -4,14 +4,18 @@
 //
 // Vertex data (see riverMesh.ts): aLat = metres across (from the centre line), aV = metres along the flow (absolute arc length),
 // aDepth = water depth under the vertex (from the real terrain), aTurb = 0..1 churn, aSpeed = surface speed m/s, aHalf = half width,
-// aDir = flow direction in x/z. Everything else is computed per pixel — no textures.
+// aDir = flow direction in x/z, aRap = 0..1 rapids, aSlope = level drop per metre. Rapids are a real staircase of drops with white water at each
+// drop, standing waves and calmer tongues in between. A plunge pool (kind 3) is a disc around the foot of a fall: churn in the middle, rings and
+// foam streaks running outwards. Everything else is computed per pixel — no textures.
 
 import * as THREE from 'three';
 import type { WaterStyle } from './style';
 
-export const MAX_OBSTACLES = 24;
+export const MAX_OBSTACLES = 40;
+/** length of one rapids step (a drop followed by a calmer tongue), metres */
+export const RAPIDS_STEP_M = 5;
 
-export type WaterShaderKind = 'river' | 'lake' | 'fall';
+export type WaterShaderKind = 'river' | 'lake' | 'fall' | 'pool';
 
 export interface WaterShared {
   time: { value: number };
@@ -36,6 +40,11 @@ float fbm(vec2 p){
   for (int i = 0; i < 4; i++) { v += a * vnoise(p); p = p * 2.03 + vec2(17.1, 9.2); a *= 0.5; }
   return v;
 }
+// phase of the rapids staircase: one cycle per step; the drop lines bow downstream in the middle (a chute) and wander a little
+float rapPhase(float lat, float v, float hw, float L){
+  float u = clamp(lat / max(hw, 0.1), -1.0, 1.0);
+  return v / L - 0.24 * (1.0 - u * u) + 0.7 * (vnoise(vec2(lat * 0.35, v * 0.06)) - 0.5);
+}
 `;
 
 const VERTEX = /* glsl */ `
@@ -45,7 +54,11 @@ attribute float aDepth;
 attribute float aTurb;
 attribute float aSpeed;
 attribute float aHalf;
+attribute float aRap;
+attribute float aSlope;
 attribute vec2 aDir;
+uniform float uTime;
+uniform float uStepLen;
 varying vec3 vWorld;
 varying float vLat;
 varying float vV;
@@ -53,13 +66,30 @@ varying float vDepth;
 varying float vTurb;
 varying float vSpeed;
 varying float vHalf;
+varying float vRap;
 varying vec2 vDir;
 #include <common>
 #include <logdepthbuf_pars_vertex>
 #include <fog_pars_vertex>
+${NOISE}
 void main() {
-  vLat = aLat; vV = aV; vDepth = aDepth; vTurb = aTurb; vSpeed = aSpeed; vHalf = aHalf; vDir = aDir;
-  vec4 worldPos = modelMatrix * vec4(position, 1.0);
+  vLat = aLat; vV = aV; vDepth = aDepth; vTurb = aTurb; vSpeed = aSpeed; vHalf = aHalf; vDir = aDir; vRap = aRap;
+  vec3 p = position;
+  #if WATER_KIND == 0
+    // rapids: the surface steps down in drops; churned water carries standing waves
+    float ph = rapPhase(aLat, aV, aHalf, uStepLen);
+    float f = fract(ph);
+    float drop = clamp(aSlope * uStepLen * 1.7, 0.0, 0.9);
+    p.y += aRap * drop * (f - smoothstep(0.78, 1.0, f) - 0.45);
+    float chop = smoothstep(0.3, 1.0, aTurb);
+    p.y += chop * 0.2 * (vnoise(vec2(aLat * 0.7, aV * 0.45 - uTime * aSpeed * 0.7)) - 0.5) * (0.4 + aRap);
+  #elif WATER_KIND == 3
+    vec2 pc = vec2(aLat, aV - 5000.0);
+    float r = length(pc);
+    float u = clamp(r / max(aHalf, 0.1), 0.0, 1.0);
+    p.y += (1.0 - u) * (0.16 * sin(r * 2.2 - uTime * 3.4) + 0.22 * (vnoise(pc * 0.45 + vec2(uTime * 0.8, -uTime * 0.6)) - 0.5));
+  #endif
+  vec4 worldPos = modelMatrix * vec4(p, 1.0);
   vWorld = worldPos.xyz;
   vec4 mvPosition = viewMatrix * worldPos;
   gl_Position = projectionMatrix * mvPosition;
@@ -86,6 +116,7 @@ uniform float uFallStreak;
 uniform float uWaveHeight;
 uniform float uWaveScale;
 uniform float uWaveSpeed;
+uniform float uStepLen;
 uniform vec4 uObs[${MAX_OBSTACLES}];
 uniform int uObsCount;
 varying vec3 vWorld;
@@ -95,6 +126,7 @@ varying float vDepth;
 varying float vTurb;
 varying float vSpeed;
 varying float vHalf;
+varying float vRap;
 varying vec2 vDir;
 #include <common>
 #include <logdepthbuf_pars_fragment>
@@ -110,7 +142,7 @@ void main() {
   float foam = 0.0;
 
   #if WATER_KIND == 2
-    // ---- waterfall: a white, streaked sheet falling down -------------------------------------
+    // ---- waterfall: a glassy lip, then a white streaked sheet that falls and breaks up ---------------------
     float u = vLat / max(vHalf, 0.01);
     float edge = 1.0 - smoothstep(0.70, 1.0, abs(u));
     float fall = vTurb;                                   // 0 at the lip … 1 at the foot
@@ -118,16 +150,21 @@ void main() {
     float s1 = fbm(vec2(vLat * 1.3, y));
     float s2 = fbm(vec2(vLat * 3.3 + 7.0, y * 2.4 + 3.0));
     float streak = smoothstep(0.34, 0.78, s1 * 0.62 + s2 * 0.5);
+    float glass = 1.0 - smoothstep(0.0, 0.07, fall);      // smooth, clear water bending over the lip
     float white = 0.42 + 0.5 * streak * uFallStreak + 0.12 * (1.0 - uFallStreak);
-    white += uFoamFall * (0.75 * (1.0 - smoothstep(0.0, 0.05, fall)) + 0.9 * smoothstep(0.93, 1.0, fall));
+    white = mix(white, 0.18 + 0.25 * streak, glass);
+    white += 0.45 * smoothstep(0.80, 0.98, abs(u)) * (1.0 - glass);   // spray tearing off at the sides
+    white += uFoamFall * (0.55 * smoothstep(0.02, 0.09, fall) * (1.0 - smoothstep(0.09, 0.2, fall)) + 0.95 * smoothstep(0.9, 1.0, fall));
     white = clamp(white, 0.0, 1.0);
-    vec3 sheet = mix(uShallow * 0.9, uFoamColor, white);
+    vec3 sheet = mix(uShallow * 0.85, uFoamColor, white);
     float fres = pow(1.0 - max(dot(normalize(vec3(vDir.x, 0.35, vDir.y)), V), 0.0), 2.0);
     col = mix(sheet, uSky, fres * 0.25);
+    col += vec3(1.0, 0.98, 0.92) * glass * 0.22;
     alpha = edge * mix(0.5, 0.97, white);
+    alpha = mix(alpha, edge * 0.8, glass);
     foam = white;
   #else
-    // ---- river / lake surface -------------------------------------------------------------------
+    // ---- river / lake / pool surface ----------------------------------------------------------------------------
     vec2 tan2 = normalize(vDir + vec2(1e-5));
     vec2 rgt2 = vec2(-tan2.y, tan2.x);
     float rip = uRipple + vTurb * 0.9;
@@ -155,6 +192,12 @@ void main() {
     #if WATER_KIND == 1
       N = normalize(vec3(-g.x, 1.0, -g.y));
     #endif
+    #if WATER_KIND == 0 || WATER_KIND == 3
+      // the displaced surface (steps, waves) shades itself
+      vec3 Ng = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
+      if (Ng.y < 0.0) Ng = -Ng;
+      N = normalize(N + (Ng - vec3(0.0, 1.0, 0.0)) * 1.8);
+    #endif
 
     // colour by depth; clear water shows the bed further out
     float deepAt = mix(0.6, 3.2, uClarity);
@@ -179,17 +222,45 @@ void main() {
     col += vec3(1.0, 0.97, 0.9) * spec * 0.9;
     alpha = min(1.0, alpha + spec * 0.5);
 
-    // foam: along the shore (where the water gets shallow) …
+    // foam along the shore (where the water gets shallow) …
     float shore = uFoamEdge * (1.0 - smoothstep(0.02, 0.5, vDepth));
     float nz = fbm(flowq * vec2(3.0, 1.6) + vec2(0.0, 3.0));
     foam += shore * smoothstep(0.25, 0.75, nz + shore * 0.45);
-    // … on rapids and wherever the water is churned …
+
     #if WATER_KIND == 0
-      float churn = smoothstep(0.35, 1.0, vTurb);          // only really churned water goes white; a brisk stream just ripples
-      float patches = smoothstep(0.55, 0.88, fbm(vec2(vLat * 1.8, (vV - t * vSpeed * 1.1) * 1.1)) + churn * 0.3);
-      foam += churn * uFoamRapids * patches;
-      foam += churn * 0.22 * smoothstep(0.62, 0.9, fbm(vec2(vLat * 5.0, (vV - t * vSpeed * 1.3) * 2.6)));
+      // … rapids: at every drop the water goes white, below it a hydraulic jump churns, then a calmer green tongue follows …
+      float ph = rapPhase(vLat, vV, vHalf, uStepLen);
+      float qd = fract(ph - 0.78);                                  // 0 where a drop starts
+      float cell = floor(ph - 0.78);
+      float face = (1.0 - smoothstep(0.0, 0.2, qd)) * smoothstep(0.22, 0.5, fbm(vec2(vLat * 0.9 + cell * 5.1, ph * 1.3)) + 0.18);
+      float jump = (1.0 - smoothstep(0.1, 0.7, qd)) * smoothstep(0.42, 0.7, fbm(vec2(vLat * 1.6 + cell * 7.3, qd * 2.5 - t * 0.25)));
+      float tongues = smoothstep(0.58, 0.88, fbm(vec2(vLat * 2.4, (vV - t * vSpeed * 1.25) * 0.28))) * (1.0 - face);
+      float rapids = vRap * (face * 0.95 + jump * 0.7 + tongues * 0.3 * vTurb);
+      foam += rapids * uFoamRapids;
+      col = mix(col, vec3(0.74, 0.90, 0.92), vRap * 0.16 * vTurb);
+      // … and churned water that is not rapids (a brisk stream) only ripples
+      float churn = smoothstep(0.5, 1.0, vTurb) * (1.0 - vRap);
+      foam += churn * 0.5 * uFoamRapids * smoothstep(0.62, 0.9, fbm(vec2(vLat * 1.8, (vV - t * vSpeed * 1.1) * 1.1)));
     #endif
+
+    #if WATER_KIND == 3
+      // plunge pool: white churn where the sheet lands, rings and streaks running outwards, rim foam from the depth above
+      vec2 pc = vec2(vLat, vV - 5000.0);
+      float r = length(pc);
+      float u = r / max(vHalf, 0.1);
+      float ang = atan(pc.y, pc.x);
+      float core = 1.0 - smoothstep(0.18, 0.62, u);
+      float radial = fbm(vec2(ang * 3.0 + 2.0 * sin(t * 0.4), r * 0.5 - t * 1.7));
+      foam += uFoamFall * core * (0.8 + 0.3 * radial);
+      float streak = smoothstep(0.5, 0.78, fbm(vec2(ang * 7.0, r * 0.25 - t * 0.9)));
+      foam += uFoamFall * (1.0 - smoothstep(0.3, 0.95, u)) * streak * 0.9;
+      float rings = smoothstep(0.7, 1.0, sin(r * 1.5 - t * 3.0)) * (1.0 - u);
+      foam += rings * 0.3;
+      foam += 0.45 * smoothstep(0.82, 1.0, u) * smoothstep(0.35, 0.7, nz);   // lapping at the rim
+      col = mix(col, uDeep * 0.85, (1.0 - smoothstep(0.1, 0.9, u)) * 0.5);
+      alpha = max(alpha, 0.95 * (1.0 - smoothstep(0.8, 1.0, u)) * (1.0 - smoothstep(0.0, 0.1, vDepth) * 0.3));
+    #endif
+
     // … and around and behind everything that sticks out of the water (on a river the foam trails off downstream;
     // on a lake aLat / aV are the world x / z and only the ring is drawn)
     for (int i = 0; i < ${MAX_OBSTACLES}; i++) {
@@ -210,7 +281,9 @@ void main() {
     foam = clamp(foam, 0.0, 1.0);
     float foamTex = foam * (0.55 + 0.45 * fbm(flowq * vec2(7.0, 3.5) + vec2(t * 0.15, 0.0)));
     foamTex = smoothstep(0.12, 0.7, foamTex) * clamp(foam * 1.6, 0.0, 1.0);
-    col = mix(col, uFoamColor, foamTex);
+    // foam is lit: its crests are bright, its hollows greyish
+    vec3 foamCol = uFoamColor * (0.82 + 0.18 * clamp(dot(N, normalize(uSun)), 0.0, 1.0));
+    col = mix(col, foamCol, foamTex);
     alpha = max(alpha, foamTex * 0.97);
     foam = foamTex;
   #endif
@@ -248,6 +321,7 @@ export function createWaterMaterial({ kind, style, shared }: WaterMaterialOption
       uWaveHeight: { value: style.waves.height },
       uWaveScale: { value: style.waves.scale },
       uWaveSpeed: { value: style.waves.speed },
+      uStepLen: { value: RAPIDS_STEP_M },
       uObs: { value: obs },
       uObsCount: { value: 0 },
     },
@@ -259,7 +333,7 @@ export function createWaterMaterial({ kind, style, shared }: WaterMaterialOption
     uniforms,
     vertexShader: VERTEX,
     fragmentShader: FRAGMENT,
-    defines: { WATER_KIND: kind === 'river' ? 0 : kind === 'lake' ? 1 : 2 },
+    defines: { WATER_KIND: kind === 'river' ? 0 : kind === 'lake' ? 1 : kind === 'fall' ? 2 : 3 },
     transparent: true,
     depthWrite: false,
     fog: true,
@@ -271,7 +345,8 @@ export function createWaterMaterial({ kind, style, shared }: WaterMaterialOption
 /** Writes up to MAX_OBSTACLES obstacles (lat, v, radius, strength) into a material's uniform array. */
 export function setObstacles(m: THREE.ShaderMaterial, obstacles: ReadonlyArray<{ lat: number; v: number; r: number; strength: number }>): void {
   const arr = m.uniforms.uObs.value as THREE.Vector4[];
-  const n = Math.min(MAX_OBSTACLES, obstacles.length);
-  for (let i = 0; i < n; i++) arr[i].set(obstacles[i].lat, obstacles[i].v, obstacles[i].r, obstacles[i].strength);
+  const list = obstacles.length > MAX_OBSTACLES ? obstacles.slice().sort((a, b) => b.strength * b.r - a.strength * a.r) : obstacles;
+  const n = Math.min(MAX_OBSTACLES, list.length);
+  for (let i = 0; i < n; i++) arr[i].set(list[i].lat, list[i].v, list[i].r, list[i].strength);
   m.uniforms.uObsCount.value = n;
 }

@@ -8,12 +8,12 @@ import * as THREE from 'three';
 import type { MaterialRegistry } from '../surface/materials';
 import { GeometryBatch } from '../props/batch';
 import type { LakeRuntime, RiverRuntime, WaterChunk, WaterSystem, WaterTerrain } from './system';
-import { createWaterMaterial, makeWaterShared, setObstacles, type WaterShared } from './waterMaterial';
+import { createWaterMaterial, makeWaterShared, RAPIDS_STEP_M, setObstacles, type WaterShared } from './waterMaterial';
 import { buildRiverChunk, type ExternalObstacle } from './riverMesh';
-import { buildFallSheet, buildPoolDisc, poolRadius } from './fallMesh';
+import { buildFallSheet, buildPoolDisc, buildPoolRocks, poolRadius } from './fallMesh';
 import { buildLake } from './lakeMesh';
 import { rockGeometry, rockMatrix, type RockPlacement } from './rocks';
-import { WaterParticles, type FallEmitter, type ParticleOptions } from './particles';
+import { WaterParticles, DEFAULT_PARTICLE_OPTIONS, type Emitter, type ParticleOptions } from './particles';
 import type { WaterStyle } from './style';
 
 export interface WaterLayerOptions {
@@ -58,7 +58,7 @@ export class WaterLayer {
   ) {
     this.opts = { ...DEFAULT_WATER_LAYER_OPTIONS, ...opts };
     this.group.name = 'water';
-    this.particles = this.opts.particles ? new WaterParticles({ maxFlecks: 3500, maxSpray: 2600, range: 260, ...this.opts.particleOptions }) : null;
+    this.particles = this.opts.particles ? new WaterParticles({ ...DEFAULT_PARTICLE_OPTIONS, ...this.opts.particleOptions }) : null;
     if (this.particles) this.group.add(this.particles.group);
     this.unsub.push(system.onChunkReady((rt, chunk) => this.buildChunk(rt, chunk)));
     this.unsub.push(system.onLakeReady((lk) => this.buildLakeMesh(lk)));
@@ -194,7 +194,7 @@ export class WaterLayer {
     return mesh;
   }
 
-  private waterMesh(geometry: THREE.BufferGeometry, kind: 'river' | 'lake' | 'fall', style: WaterStyle, obstacles: ReadonlyArray<{ lat: number; v: number; r: number; strength: number }>, name: string): THREE.Mesh {
+  private waterMesh(geometry: THREE.BufferGeometry, kind: 'river' | 'lake' | 'fall' | 'pool', style: WaterStyle, obstacles: ReadonlyArray<{ lat: number; v: number; r: number; strength: number }>, name: string): THREE.Mesh {
     const mat = createWaterMaterial({ kind, style, shared: this.shared });
     setObstacles(mat, obstacles);
     const mesh = new THREE.Mesh(geometry, mat);
@@ -218,7 +218,10 @@ export class WaterLayer {
       if (f) {
         const pool = buildPoolDisc(rt, f, this.terrain);
         pool.computeBoundingSphere();
-        objects.push(this.waterMesh(pool, 'river', rt.style, [], `${name}:pool`));
+        objects.push(this.waterMesh(pool, 'pool', rt.style, [], `${name}:pool`));
+        rocks = buildPoolRocks(rt, f, this.terrain);
+        const rm = this.rockMesh(rocks, rt.style, `${name}:poolrocks`);
+        if (rm) objects.push(rm);
       }
     } else {
       const ext = this.opts.externalObstacles?.(rt.def.id) ?? [];
@@ -251,29 +254,27 @@ export class WaterLayer {
   private refreshParticles(): void {
     this.particlesDirty = false;
     if (!this.particles) return;
-    const rivers: RiverRuntime[] = [];
-    const emitters: FallEmitter[] = [];
+    const emitters: Emitter[] = [];
     for (const rt of this.system.rivers) {
-      // a river is part of the particle world once at least one chunk is built
-      if (rt.pendingCount === rt.chunks.length) continue;
-      const ri = rivers.length;
-      rivers.push(rt);
+      if (rt.pendingCount === rt.chunks.length) continue; // nothing built yet
       const st = rt.style;
       for (const f of rt.hydro.falls) {
         const dx = f.foot.x - f.lip.x, dz = f.foot.z - f.lip.z, l = Math.hypot(dx, dz) || 1;
-        const big = Math.min(1, f.height / 60);
-        emitters.push({ river: ri, x: f.foot.x, y: f.foot.y, z: f.foot.z, dx: dx / l, dz: dz / l, radius: poolRadius(rt, f) * 0.55, strength: 0.4 + 0.6 * big, mist: st.particles.mist * (0.4 + 0.6 * big), spray: st.particles.spray });
+        const power = Math.min(1, 0.25 + f.height / 40);
+        emitters.push({ x: f.foot.x, y: f.foot.y, z: f.foot.z, dx: dx / l, dz: dz / l, radius: poolRadius(rt, f) * 0.5, kind: 'pool', power: power * Math.max(0.2, st.particles.spray), height: f.height * Math.max(0.2, st.particles.mist) });
       }
-      // rapids: low spray every ~25 m of churned water
-      let last = -1e9;
-      for (const s of rt.hydro.samples) {
-        if (s.kind === 'rapids' && s.s - last > 25) {
-          last = s.s;
-          emitters.push({ river: ri, x: s.pos.x, y: s.pos.y + 0.1, z: s.pos.z, dx: s.tangent.x, dz: s.tangent.z, radius: Math.max(1.2, s.width * 0.35), strength: 0.12, mist: st.particles.mist * 0.15, spray: st.particles.spray * 0.5 });
-        }
+      // every drop of the rapids staircase throws up some water
+      const S = rt.hydro.samples;
+      let k = -1;
+      for (let i = 1; i < S.length; i++) {
+        if (S[i].kind !== 'rapids') continue;
+        const n = Math.floor((S[i].s / RAPIDS_STEP_M) - 0.85);
+        if (n === k) continue;
+        k = n;
+        emitters.push({ x: S[i].pos.x, y: S[i].pos.y + 0.05, z: S[i].pos.z, dx: S[i].tangent.x, dz: S[i].tangent.z, radius: S[i].width * 0.4, kind: 'drop', power: Math.min(1, 0.3 + S[i].slope * 8) * Math.max(0.2, st.particles.spray), height: 0 });
       }
     }
-    this.particles.setRivers(rivers, emitters);
+    this.particles.setEmitters(emitters);
   }
 
   dispose(): void {

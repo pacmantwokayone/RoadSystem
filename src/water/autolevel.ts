@@ -13,9 +13,11 @@ export interface AutoLevelOptions {
   endLevel?: number;
   /** a waterfall whose ground does not fall at least this much still drops by this much, metres */
   minFallDrop: number;
+  /** after a rapids segment the water drops at least this much per metre (rapids need a real gradient) */
+  rapidsSlope: number;
 }
 
-export const DEFAULT_AUTO_LEVEL: AutoLevelOptions = { below: 0.4, minFallDrop: 4 };
+export const DEFAULT_AUTO_LEVEL: AutoLevelOptions = { below: 0.4, minFallDrop: 4, rapidsSlope: 0.04 };
 
 export function autoLevel(points: readonly RiverPoint[], ground: (x: number, z: number) => number, opts: Partial<AutoLevelOptions> = {}): RiverPoint[] {
   const o = { ...DEFAULT_AUTO_LEVEL, ...opts };
@@ -25,6 +27,7 @@ export function autoLevel(points: readonly RiverPoint[], ground: (x: number, z: 
     let y = Math.min(run, ground(p.x, p.z) - o.below);
     if (i === 0 && o.startLevel !== undefined) y = o.startLevel;
     if (i > 0 && points[i - 1].seg === 'fall') y = Math.min(y, out[i - 1].y - o.minFallDrop);
+    if (i > 0 && points[i - 1].seg === 'rapids') y = Math.min(y, out[i - 1].y - o.rapidsSlope * Math.hypot(p.x - points[i - 1].x, p.z - points[i - 1].z));
     if (i === points.length - 1 && o.endLevel !== undefined) y = Math.min(o.endLevel, run);
     run = Math.min(run, y);
     out.push({ ...p, y });

@@ -30,7 +30,7 @@ export function waterDemoHeight(x: number, z: number): number {
   const cx = cliffX + (70 * Math.sin((z - centreZ) / 190) + 35 * Math.sin((z - centreZ) / 71 + 1.3)) * smooth(40, 260, dz);
   const cliff = smooth(cx - cliffW / 2, cx + cliffW / 2, x); // 0 on the plateau, 1 in the valley
   const hills = Math.sin(x / 260) * Math.sin(z / 310) * 26 + Math.sin(x / 97 + z / 131) * 8 + Math.sin(z / 53 - x / 71) * 3;
-  const top = plateau + noise(1) * 2.2 + 25 * smooth(2500, 2200, x) - Math.max(0, x - 2900) * 0.04 + hills * rough;
+  const top = plateau + noise(1) * (0.3 + 1.9 * rough) + 25 * smooth(2500, 2200, x) - Math.max(0, x - 2900) * 0.066 + hills * rough;
   const floor = valley - (x - cliffX) * 0.018 + noise(0.6) * 1.4 + walls * 0.8 + (Math.sin(x / 190 + 1) * Math.sin(z / 240) * 12 + Math.sin(x / 73 - z / 97) * 3) * calm;
   return top + (floor - top) * cliff + walls * (1 - cliff) * 0.5;
 }
@@ -54,7 +54,7 @@ export function waterDemoWaters(ground: (x: number, z: number) => number = water
     autoLevelRiver({
       id: 'bergbach', name: 'Bergbach', style: 'wildbach', startLake: 'oberer-see',
       points: [
-        P(2918, 3000, { width: 6 }), P(3000, 3012), P(3080, 2995, { seg: 'rapids' }), P(3160, 3008), P(3240, 2990, { seg: 'rapids' }), P(3330, 3004, { width: 7 }),
+        P(2918, 3000, { width: 6 }), P(3000, 3012, { seg: 'rapids' }), P(3070, 2995, { seg: 'rapids' }), P(3150, 3008, { seg: 'rapids' }), P(3240, 2990, { seg: 'rapids' }), P(3330, 3004, { width: 7 }),
         P(3384, 3000, { width: 8, seg: 'fall' }), // the lip
         P(3428, 3000, { width: 10 }), // the foot, ~400 m lower
         P(3520, 3010, { width: 12 }), P(3640, 2990), P(3780, 3005, { width: 14 }),
@@ -64,10 +64,10 @@ export function waterDemoWaters(ground: (x: number, z: number) => number = water
     autoLevelRiver({
       id: 'talfluss', name: 'Talfluss', style: 'fluss', endLake: 'unterer-see',
       points: [
-        P(3780, 3005, { width: 14 }), P(3900, 3030), P(3990, 3015, { seg: 'fall', width: 15 }), P(4000, 3015), // a small step
-        P(4100, 2990, { seg: 'rapids' }), P(4200, 3010), P(4330, 3040, { width: 18 }), P(4460, 3020), P(4590, 2995), P(4720, 3000, { width: 20 }),
+        P(3780, 3005, { width: 14 }), P(3900, 3030), P(3985, 3015, { seg: 'fall', width: 16 }), P(4000, 3015, { width: 17 }), // a 10 m step
+        P(4040, 3000, { seg: 'rapids' }), P(4110, 2990, { seg: 'rapids' }), P(4200, 3010), P(4330, 3040, { width: 18 }), P(4460, 3020), P(4590, 2995), P(4720, 3000, { width: 20 }),
       ],
-    }, ground, lakes),
+    }, ground, lakes, { minFallDrop: 10 }),
     // a side stream from the south that joins the river
     autoLevelRiver({
       id: 'seitenbach', name: 'Seitenbach', style: 'bach', endRiver: 'talfluss',

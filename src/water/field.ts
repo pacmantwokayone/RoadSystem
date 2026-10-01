@@ -11,7 +11,7 @@
 
 import type { Rect } from '../core/terrain';
 import type { WaterStyle } from './style';
-import type { RiverHydro } from './hydro';
+import { poolDims, type RiverHydro } from './hydro';
 import { smoothOutline } from './outline';
 import type { LakeDef } from './types';
 
@@ -113,8 +113,9 @@ export class WaterField {
     }
     for (const f of h.falls) {
       const s = S[f.i1];
-      const r = Math.max(5, f.width * st.fall.poolRadius);
-      const pool: Pool = { x: f.foot.x, z: -f.foot.z, r, level: s.level, depth: st.fall.poolDepth, slope: st.banks.slope, bank: st.banks.width + r * 0.3, id: h.def.id };
+      const dims = poolDims(st, f);
+      const r = dims.radius;
+      const pool: Pool = { x: f.foot.x, z: -f.foot.z, r, level: s.level, depth: dims.depth, slope: st.banks.slope, bank: st.banks.width + r * 0.3, id: h.def.id };
       this.pools.push(pool);
       const R = pool.r + pool.bank;
       const rect = { minX: pool.x - R, maxX: pool.x + R, minZ: pool.z - R, maxZ: pool.z + R };

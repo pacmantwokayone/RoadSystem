@@ -2,7 +2,9 @@
 
 import * as THREE from 'three';
 import { flipZ } from '../core/world';
-import type { FallInfo } from './hydro';
+import { hash01 } from '../props/rules';
+import type { RockPlacement } from './rocks';
+import { poolDims, type FallInfo } from './hydro';
 import type { RiverRuntime, WaterChunk, WaterTerrain } from './system';
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
@@ -48,24 +50,24 @@ export function buildFallSheet(rt: RiverRuntime, chunk: WaterChunk): THREE.Buffe
 
 /** radius of the plunge pool of a fall, metres */
 export function poolRadius(rt: RiverRuntime, f: FallInfo): number {
-  return Math.max(5, f.width * rt.style.fall.poolRadius);
+  return poolDims(rt.style, f).radius;
 }
 
 /** The pool at the foot: a disc of water (drawn with the river shader, churned in the middle where the sheet lands). */
 export function buildPoolDisc(rt: RiverRuntime, f: FallInfo, terrain: WaterTerrain): THREE.BufferGeometry {
   const R = poolRadius(rt, f) * 1.18;
-  const rings = 12, spokes = 40;
+  const rings = 22, spokes = 64;
   const level = f.foot.y;
   const cx = f.foot.x, cz = f.foot.z;
   const count = 1 + rings * spokes;
   const pos = new Float32Array(count * 3);
   const aLat = new Float32Array(count), aV = new Float32Array(count), aDepth = new Float32Array(count);
-  const aTurb = new Float32Array(count), aSpeed = new Float32Array(count).fill(0.9), aHalf = new Float32Array(count).fill(R);
+  const aTurb = new Float32Array(count), aSpeed = new Float32Array(count).fill(0.9), aHalf = new Float32Array(count).fill(R);  // u = r / aHalf runs 0 … 1 over the disc
   const aDir = new Float32Array(count * 2);
   const put = (i: number, x: number, z: number, r: number): void => {
     pos[i * 3] = x; pos[i * 3 + 1] = level; pos[i * 3 + 2] = z;
     const g = terrain.heightAt(x, flipZ(z));
-    aDepth[i] = clamp(g === null ? rt.style.fall.poolDepth * (1 - (r / R) ** 2) : level - g, -0.5, 60);
+    aDepth[i] = clamp(g === null ? poolDims(rt.style, f).depth * (1 - (r / R) ** 2) : level - g, -0.5, 60);
     aLat[i] = x - cx; aV[i] = z - cz + 5000; // isotropic pattern around the pool
     aTurb[i] = clamp(0.95 - 0.7 * (r / R), 0.15, 1);
     aDir[i * 2] = 1;
@@ -109,4 +111,27 @@ export function buildPoolDisc(rt: RiverRuntime, f: FallInfo, terrain: WaterTerra
   g.setIndex(idx);
   g.computeBoundingSphere();
   return g;
+}
+
+/** Boulders round the rim of a plunge pool (and a few standing in it): they frame the pool and take the spray. */
+export function buildPoolRocks(rt: RiverRuntime, f: FallInfo, terrain: WaterTerrain): RockPlacement[] {
+  const R = poolRadius(rt, f);
+  const out: RockPlacement[] = [];
+  const n = Math.round(clamp(R * 1.6, 8, 40));
+  const seed = rt.seed ^ (f.point * 7919);
+  for (let k = 0; k < n; k++) {
+    const h = (j: number): number => hash01(seed, k, j);
+    const a = (k / n) * Math.PI * 2 + (h(1) - 0.5) * 0.5;
+    const inPool = h(2) < 0.18;
+    const r = inPool ? R * (0.45 + 0.4 * h(3)) : R * (1.0 + 0.35 * h(3));
+    const x = f.foot.x + Math.cos(a) * r, z = f.foot.z + Math.sin(a) * r;
+    const g = terrain.heightAt(x, flipZ(z));
+    if (g === null) continue;
+    const size = rt.style.rocks.min + (rt.style.rocks.max * 1.4 - rt.style.rocks.min) * h(4) * h(4);
+    const aspect = 0.7 + h(5) * 0.7;
+    const H = size * (0.6 + 0.4 * h(6));
+    const y = inPool ? Math.max(g, f.foot.y - 0.2 * size) + H * 0.3 : g + H * 0.3;
+    out.push({ x, y, z, sx: size / 2, sy: H / 2, sz: (size * aspect) / 2, yaw: h(7) * Math.PI * 2, variant: Math.floor(h(8) * 6), shade: Math.floor(h(9) * 3) });
+  }
+  return out;
 }

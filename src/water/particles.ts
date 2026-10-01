@@ -1,23 +1,20 @@
-// Particles that make the water move: flecks of foam and bubbles that drift with the current (so you SEE which way a river flows),
-// droplets that race down a waterfall, spray where water crashes, and mist that billows at the foot of a fall.
+// Particles that go with the water: droplets thrown up where water drops and crashes, and mist that rises from the foot of waterfalls.
+// (The flow direction itself is drawn by the water shader — streaks and foam that travel with the current — not by particles.)
 //
-// Everything is CPU-driven from the river's own samples (position, flow speed, width) and drawn as two soft Points clouds.
-// Particles only live near the camera; they are spawned everywhere in range and fade in and out, so the cost does not depend
-// on how long the rivers are.
+// Everything is CPU-driven, drawn as two Points clouds, and only exists near the camera: emitters far away are not simulated.
 
 import * as THREE from 'three';
 import { hash01 } from '../props/rules';
-import type { RiverRuntime } from './system';
-import type { RiverSample } from './hydro';
 
 export interface ParticleOptions {
-  maxFlecks: number;
   maxSpray: number;
-  /** particles are only simulated this close to the camera, metres */
-  range: number;
+  maxMist: number;
+  /** droplets are only made this close to the camera, metres */
+  sprayRange: number;
+  mistRange: number;
 }
 
-export const DEFAULT_PARTICLE_OPTIONS: ParticleOptions = { maxFlecks: 3500, maxSpray: 2600, range: 260 };
+export const DEFAULT_PARTICLE_OPTIONS: ParticleOptions = { maxSpray: 2200, maxMist: 700, sprayRange: 220, mistRange: 900 };
 
 const VERT = /* glsl */ `
 attribute float aSize;
@@ -30,7 +27,7 @@ void main() {
   vAlpha = aAlpha;
   vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * mvPosition;
-  gl_PointSize = max(aSize * uScale / max(-mvPosition.z, 0.1), 1.6);
+  gl_PointSize = clamp(aSize * uScale / max(-mvPosition.z, 0.1), 0.0, 220.0);
   #include <logdepthbuf_vertex>
 }
 `;
@@ -46,7 +43,8 @@ void main() {
   vec2 c = gl_PointCoord * 2.0 - 1.0;
   float d = dot(c, c);
   if (d > 1.0) discard;
-  float a = (1.0 - smoothstep(1.0 - uSoft, 1.0, d)) * vAlpha;
+  float a = pow(1.0 - d, uSoft) * vAlpha;
+  if (a < 0.003) discard;
   gl_FragColor = vec4(uColor, a);
 }
 `;
@@ -59,7 +57,7 @@ class Cloud {
   readonly geometry = new THREE.BufferGeometry();
   readonly material: THREE.ShaderMaterial;
 
-  constructor(readonly count: number, color: number, additive: boolean, soft: number) {
+  constructor(readonly count: number, color: number, soft: number, order: number) {
     this.pos = new Float32Array(count * 3);
     this.size = new Float32Array(count);
     this.alpha = new Float32Array(count);
@@ -69,12 +67,11 @@ class Cloud {
     this.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e7); // positions change every frame
     this.material = new THREE.ShaderMaterial({
       uniforms: { uScale: { value: 800 }, uColor: { value: new THREE.Color(color) }, uSoft: { value: soft } },
-      vertexShader: VERT, fragmentShader: FRAG,
-      transparent: true, depthWrite: false, blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
+      vertexShader: VERT, fragmentShader: FRAG, transparent: true, depthWrite: false,
     });
     this.points = new THREE.Points(this.geometry, this.material);
     this.points.frustumCulled = false;
-    this.points.renderOrder = 5;
+    this.points.renderOrder = order;
     this.points.onBeforeRender = (renderer, _scene, camera): void => {
       const h = renderer.getDrawingBufferSize(new THREE.Vector2()).y;
       const fov = (camera as THREE.PerspectiveCamera).fov ?? 60;
@@ -89,176 +86,181 @@ class Cloud {
   }
 }
 
-interface Fleck {
-  river: number;
-  s: number;
-  u: number;
-  speedMul: number;
-  age: number;
-  life: number;
-  size: number;
-  /** a droplet on a waterfall: larger and brighter */
-  alive: boolean;
+export interface Emitter {
+  /** where it sits (THREE space) and the horizontal direction the water runs there */
+  x: number; y: number; z: number;
+  dx: number; dz: number;
+  /** spread across / around it, metres */
+  radius: number;
+  kind: 'pool' | 'drop';
+  /** 0..1 how much water crashes here */
+  power: number;
+  /** pools: the fall's height, metres (taller falls make taller mist) */
+  height: number;
 }
 
-interface Spray {
+interface P {
   x: number; y: number; z: number;
   vx: number; vy: number; vz: number;
   age: number; life: number;
-  size: number; grow: number;
-  alpha: number;
-  mist: boolean;
+  size: number; grow: number; alpha: number;
   alive: boolean;
 }
 
-export interface FallEmitter {
-  river: number;
-  x: number; y: number; z: number;
-  /** horizontal flow direction at the foot */
-  dx: number; dz: number;
-  radius: number;
-  strength: number;
-  mist: number;
-  spray: number;
-}
-
-const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
+const mkP = (): P => ({ x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, age: 0, life: 1, size: 0.1, grow: 0, alpha: 0.5, alive: false });
 const smooth = (a: number, b: number, v: number): number => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 export class WaterParticles {
   readonly group = new THREE.Group();
-  private readonly flecksCloud: Cloud;
   private readonly sprayCloud: Cloud;
   private readonly mistCloud: Cloud;
-  private rivers: RiverRuntime[] = [];
-  private emitters: FallEmitter[] = [];
-  private readonly flecks: Fleck[];
-  private readonly spray: Spray[];
-  private readonly mist: Spray[];
-  private t = 0;
+  private readonly spray: P[];
+  private readonly mist: P[];
+  private emitters: Emitter[] = [];
+  private near: Emitter[] = [];
+  private nearMist: Emitter[] = [];
+  private nearTimer = 0;
   private seq = 1;
+  private sprayDebt = 0;
+  private mistDebt = 0;
 
   constructor(private readonly opts: ParticleOptions = DEFAULT_PARTICLE_OPTIONS) {
-    this.flecksCloud = new Cloud(opts.maxFlecks, 0xffffff, false, 0.5);
-    this.sprayCloud = new Cloud(Math.floor(opts.maxSpray * 0.6), 0xf2f8ff, true, 0.7);
-    this.mistCloud = new Cloud(Math.floor(opts.maxSpray * 0.4), 0xe6f0f8, false, 1.0);
-    this.group.add(this.flecksCloud.points, this.sprayCloud.points, this.mistCloud.points);
+    this.sprayCloud = new Cloud(opts.maxSpray, 0xffffff, 0.45, 6);
+    this.mistCloud = new Cloud(opts.maxMist, 0xeef4f7, 1.2, 5);
+    this.group.add(this.mistCloud.points, this.sprayCloud.points);
     this.group.name = 'water-particles';
-    this.flecks = Array.from({ length: opts.maxFlecks }, () => ({ river: -1, s: 0, u: 0, speedMul: 1, age: 0, life: 1, size: 0.1, alive: false }));
-    const mk = (): Spray => ({ x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, age: 0, life: 1, size: 0.2, grow: 0, alpha: 0.5, mist: false, alive: false });
-    this.spray = Array.from({ length: this.sprayCloud.count }, mk);
-    this.mist = Array.from({ length: this.mistCloud.count }, mk);
+    this.spray = Array.from({ length: opts.maxSpray }, mkP);
+    this.mist = Array.from({ length: opts.maxMist }, mkP);
   }
 
-  /** the rivers whose water particles may move on; call when chunks become ready / are removed */
-  setRivers(rivers: readonly RiverRuntime[], emitters: readonly FallEmitter[]): void {
-    this.rivers = rivers.slice();
-    this.emitters = emitters.slice();
+  setEmitters(list: readonly Emitter[]): void {
+    this.emitters = list.slice();
+    this.nearTimer = 0;
   }
 
-  private rnd(a = 0): number {
-    return hash01(this.seq++, a, 7);
+  private rnd(): number {
+    return hash01(this.seq++, 5, 11);
   }
 
-  private sampleAt(rt: RiverRuntime, s: number): { a: RiverSample; b: RiverSample; f: number } {
-    const S = rt.hydro.samples;
-    let lo = 0, hi = S.length - 1;
-    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (S[mid].s <= s) lo = mid; else hi = mid; }
-    const a = S[lo], b = S[hi];
-    return { a, b, f: b.s > a.s ? Math.min(1, Math.max(0, (s - a.s) / (b.s - a.s))) : 0 };
-  }
-
-  private spawnFleck(f: Fleck, cam: THREE.Vector3): void {
-    f.alive = false;
-    if (!this.rivers.length) return;
-    // pick a river that has water near the camera: try a few random places
-    for (let tries = 0; tries < 6; tries++) {
-      const ri = Math.floor(this.rnd(1) * this.rivers.length);
-      const rt = this.rivers[ri];
-      if (!rt.hydro.samples.length || rt.style.particles.flecks <= 0) continue;
-      const s = this.rnd(2) * rt.hydro.length;
-      const { a, b, f: t } = this.sampleAt(rt, s);
-      const x = lerp(a.pos.x, b.pos.x, t), z = lerp(a.pos.z, b.pos.z, t);
-      if (Math.hypot(x - cam.x, z - cam.z) > this.opts.range) continue;
-      // thin out by the style's density (flecks per 100 m² of water)
-      if (this.rnd(3) > Math.min(1, rt.style.particles.flecks / 3)) continue;
-      f.river = ri; f.s = s; f.u = (this.rnd(4) * 2 - 1) * 0.92; f.speedMul = 0.75 + this.rnd(5) * 0.5;
-      f.age = 0; f.life = 3 + this.rnd(6) * 7; f.size = rt.style.particles.size * (0.6 + this.rnd(7) * 1.1); f.alive = true;
-      return;
+  private spawnSpray(p: P, e: Emitter): void {
+    const a = this.rnd() * Math.PI * 2;
+    if (e.kind === 'pool') {
+      // thrown up and outwards where the sheet lands
+      const r = e.radius * (0.15 + 0.5 * Math.sqrt(this.rnd()));
+      p.x = e.x + Math.cos(a) * r; p.z = e.z + Math.sin(a) * r; p.y = e.y + 0.1;
+      const out = (1.5 + 3.5 * this.rnd()) * (0.5 + e.power);
+      p.vx = Math.cos(a) * out; p.vz = Math.sin(a) * out;
+      p.vy = (3 + 8 * this.rnd()) * (0.5 + 0.5 * e.power) + Math.min(10, e.height * 0.04);
+      p.life = 0.9 + 1.4 * this.rnd();
+      p.size = 0.05 + 0.1 * this.rnd();
+      p.alpha = 0.55 + 0.35 * this.rnd();
+    } else {
+      // at a drop in the rapids: a small fan of droplets thrown up and downstream
+      const lat = (this.rnd() * 2 - 1) * e.radius;
+      p.x = e.x - e.dz * lat; p.z = e.z + e.dx * lat; p.y = e.y + 0.05;
+      const v = (0.8 + 2.2 * this.rnd()) * (0.5 + e.power);
+      p.vx = e.dx * v + (this.rnd() - 0.5) * 0.8; p.vz = e.dz * v + (this.rnd() - 0.5) * 0.8;
+      p.vy = (1.2 + 2.6 * this.rnd()) * (0.5 + e.power);
+      p.life = 0.35 + 0.55 * this.rnd();
+      p.size = 0.03 + 0.06 * this.rnd();
+      p.alpha = 0.5 + 0.4 * this.rnd();
     }
+    p.age = 0; p.grow = 0; p.alive = true;
   }
 
-  private spawnSpray(list: Spray[], i: number, mist: boolean): void {
-    const p = list[i];
-    p.alive = false;
-    if (!this.emitters.length) return;
-    const e = this.emitters[Math.floor(this.rnd(11) * this.emitters.length)];
-    if (this.rnd(12) > Math.min(1, (mist ? e.mist : e.spray) * 1.2)) return;
-    const a = this.rnd(13) * Math.PI * 2, r = Math.sqrt(this.rnd(14)) * e.radius * (mist ? 0.95 : 0.7);
-    p.x = e.x + Math.cos(a) * r; p.z = e.z + Math.sin(a) * r; p.y = e.y + 0.2;
-    const out = (mist ? 1 : 2.5) * (0.4 + this.rnd(15));
-    const up = (mist ? 2.2 : 7 + e.strength * 10) * (0.4 + this.rnd(16));
-    p.vx = e.dx * out + (this.rnd(17) - 0.5) * 2; p.vz = e.dz * out + (this.rnd(18) - 0.5) * 2; p.vy = up;
-    p.age = 0; p.life = mist ? 3 + this.rnd(19) * 4 : 1 + this.rnd(19) * 1.6;
-    p.size = mist ? 2 + this.rnd(20) * 5 : 0.1 + this.rnd(20) * 0.35;
-    p.grow = mist ? 2.2 + this.rnd(21) * 2 : 0.05;
-    p.alpha = mist ? 0.10 + this.rnd(22) * 0.12 : 0.5 + this.rnd(22) * 0.4;
-    p.mist = mist; p.alive = true;
+  private spawnMist(p: P, e: Emitter): void {
+    const a = this.rnd() * Math.PI * 2;
+    const r = e.radius * Math.sqrt(this.rnd()) * 1.1;
+    p.x = e.x + Math.cos(a) * r; p.z = e.z + Math.sin(a) * r; p.y = e.y + 0.5 + this.rnd() * 1.5;
+    const rise = 1.6 + 2.4 * this.rnd() + Math.min(5, e.height * 0.02);
+    p.vx = Math.cos(a) * 0.6 + e.dx * 2.2; p.vz = Math.sin(a) * 0.6 + e.dz * 2.2; p.vy = rise;
+    p.life = 5 + 6 * this.rnd() + Math.min(6, e.height * 0.02);
+    // a 10 m step makes a little haze, a 400 m fall a cloud
+    const hs = Math.min(1.3, Math.max(0.1, Math.sqrt(e.height) / 14));
+    p.size = (4 + 8 * this.rnd()) * hs;
+    p.grow = (2 + 3 * this.rnd()) * hs;
+    p.vy *= 0.35 + 0.65 * Math.min(1, hs);
+    p.alpha = (0.13 + 0.14 * this.rnd()) * (0.5 + 0.5 * e.power) * (0.35 + 0.65 * Math.min(1, hs));
+    p.age = 0; p.alive = true;
   }
+
+  /** a plume that appears the moment you arrive looks wrong: when particles first become relevant, run a few seconds ahead */
+  private warm = false;
 
   update(dt: number, camera: THREE.Vector3): void {
-    dt = Math.min(dt, 0.1);
-    this.t += dt;
-    const F = this.flecksCloud;
-    for (let i = 0; i < this.flecks.length; i++) {
-      const f = this.flecks[i];
-      if (!f.alive) { if (this.rnd(30) < 0.12) this.spawnFleck(f, camera); }
-      if (!f.alive) { F.alpha[i] = 0; F.size[i] = 0; continue; }
-      const rt = this.rivers[f.river];
-      if (!rt) { f.alive = false; F.alpha[i] = 0; continue; }
-      const { a, b, f: t } = this.sampleAt(rt, f.s);
-      const speed = lerp(a.speed, b.speed, t) * f.speedMul;
-      f.s += speed * dt;
-      f.age += dt;
-      if (f.age > f.life || f.s >= rt.hydro.length) { f.alive = false; F.alpha[i] = 0; continue; }
-      const { a: a2, b: b2, f: t2 } = this.sampleAt(rt, f.s);
-      const half = lerp(a2.width, b2.width, t2) / 2;
-      const x = lerp(a2.pos.x, b2.pos.x, t2) + lerp(a2.right.x, b2.right.x, t2) * f.u * half;
-      const z = lerp(a2.pos.z, b2.pos.z, t2) + lerp(a2.right.z, b2.right.z, t2) * f.u * half;
-      const fall = a2.kind === 'fall';
-      const y = lerp(a2.pos.y, b2.pos.y, t2) + (fall ? 0.3 : 0.05 + 0.03 * Math.sin(this.t * 3 + i));
-      F.pos[i * 3] = x; F.pos[i * 3 + 1] = y; F.pos[i * 3 + 2] = z;
-      if (Math.hypot(x - camera.x, z - camera.z) > this.opts.range) { f.alive = false; F.alpha[i] = 0; continue; }
-      const fade = smooth(0, 0.6, f.age) * smooth(f.life, f.life - 1.2, f.age) * smooth(this.opts.range, this.opts.range * 0.7, Math.hypot(x - camera.x, z - camera.z));
-      const turb = lerp(a2.turbulence, b2.turbulence, t2);
-      F.alpha[i] = fade * (fall ? 0.9 : 0.35 + 0.45 * turb);
-      F.size[i] = f.size * (fall ? 2.6 : 1);
-    }
-    F.flush();
-    this.stepSpray(this.spray, this.sprayCloud, dt, camera, false);
-    this.stepSpray(this.mist, this.mistCloud, dt, camera, true);
+    this.step(dt, camera);
+    if (!this.warm && (this.nearMist.length || this.near.length)) {
+      this.warm = true;
+      for (let i = 0; i < 60; i++) this.step(0.1, camera);
+    } else if (this.warm && !this.nearMist.length && !this.near.length) this.warm = false;
   }
 
-  private stepSpray(list: Spray[], cloud: Cloud, dt: number, camera: THREE.Vector3, mist: boolean): void {
-    for (let i = 0; i < list.length; i++) {
-      const p = list[i];
-      if (!p.alive) { if (this.rnd(40) < (mist ? 0.05 : 0.18)) this.spawnSpray(list, i, mist); }
-      if (!p.alive) { cloud.alpha[i] = 0; cloud.size[i] = 0; continue; }
+  private step(dt: number, camera: THREE.Vector3): void {
+    dt = Math.min(dt, 0.1);
+    // which emitters are close enough to matter (refreshed a few times a second)
+    this.nearTimer -= dt;
+    if (this.nearTimer <= 0) {
+      this.nearTimer = 0.4;
+      const rs = this.opts.sprayRange * this.opts.sprayRange, rm = this.opts.mistRange * this.opts.mistRange;
+      this.near = []; this.nearMist = [];
+      for (const e of this.emitters) {
+        const d2 = (e.x - camera.x) ** 2 + (e.z - camera.z) ** 2;
+        if (d2 < rs) this.near.push(e);
+        if (e.kind === 'pool' && d2 < rm) this.nearMist.push(e);
+      }
+    }
+    // spawn
+    if (this.near.length) {
+      this.sprayDebt += Math.min(900, 160 + 40 * this.near.length) * dt;
+      for (const p of this.spray) {
+        if (this.sprayDebt < 1) break;
+        if (p.alive) continue;
+        this.spawnSpray(p, this.near[Math.floor(this.rnd() * this.near.length)]);
+        this.sprayDebt -= 1;
+      }
+      this.sprayDebt = Math.min(this.sprayDebt, 20);
+    }
+    if (this.nearMist.length) {
+      this.mistDebt += Math.min(120, 70 * this.nearMist.length) * dt;
+      for (const p of this.mist) {
+        if (this.mistDebt < 1) break;
+        if (p.alive) continue;
+        this.spawnMist(p, this.nearMist[Math.floor(this.rnd() * this.nearMist.length)]);
+        this.mistDebt -= 1;
+      }
+      this.mistDebt = Math.min(this.mistDebt, 10);
+    }
+    // move
+    const S = this.sprayCloud;
+    this.spray.forEach((p, i) => {
+      if (!p.alive) { S.alpha[i] = 0; S.size[i] = 0; return; }
       p.age += dt;
-      if (p.age > p.life) { p.alive = false; cloud.alpha[i] = 0; continue; }
-      if (mist) { p.vy *= 1 - 0.35 * dt; p.vx *= 1 - 0.2 * dt; p.vz *= 1 - 0.2 * dt; } else p.vy -= 9.81 * dt;
+      if (p.age > p.life) { p.alive = false; S.alpha[i] = 0; S.size[i] = 0; return; }
+      p.vy -= 9.81 * dt; p.vx *= 1 - 0.8 * dt; p.vz *= 1 - 0.8 * dt;
+      p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+      S.pos[i * 3] = p.x; S.pos[i * 3 + 1] = p.y; S.pos[i * 3 + 2] = p.z;
+      S.size[i] = p.size;
+      S.alpha[i] = p.alpha * smooth(0, 0.08, p.age) * (1 - smooth(0.6, 1, p.age / p.life));
+    });
+    S.flush();
+    const M = this.mistCloud;
+    this.mist.forEach((p, i) => {
+      if (!p.alive) { M.alpha[i] = 0; M.size[i] = 0; return; }
+      p.age += dt;
+      if (p.age > p.life) { p.alive = false; M.alpha[i] = 0; M.size[i] = 0; return; }
+      p.vy *= 1 - 0.18 * dt; p.vx *= 1 - 0.1 * dt; p.vz *= 1 - 0.1 * dt;
       p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
       p.size += p.grow * dt;
-      const d = Math.hypot(p.x - camera.x, p.z - camera.z);
-      cloud.pos[i * 3] = p.x; cloud.pos[i * 3 + 1] = p.y; cloud.pos[i * 3 + 2] = p.z;
-      cloud.size[i] = p.size;
-      cloud.alpha[i] = p.alpha * smooth(0, 0.25, p.age) * smooth(p.life, p.life * 0.55, p.age) * smooth(this.opts.range * 3, this.opts.range * 2, d);
-    }
-    cloud.flush();
+      const k = p.age / p.life;
+      M.pos[i * 3] = p.x; M.pos[i * 3 + 1] = p.y; M.pos[i * 3 + 2] = p.z;
+      M.size[i] = p.size;
+      M.alpha[i] = p.alpha * smooth(0, 0.18, k) * (1 - smooth(0.5, 1, k));
+    });
+    M.flush();
   }
 
   dispose(): void {
-    for (const c of [this.flecksCloud, this.sprayCloud, this.mistCloud]) { c.geometry.dispose(); c.material.dispose(); }
+    for (const c of [this.sprayCloud, this.mistCloud]) { c.geometry.dispose(); c.material.dispose(); }
     this.group.clear();
   }
 }

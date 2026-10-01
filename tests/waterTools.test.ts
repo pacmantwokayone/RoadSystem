@@ -80,7 +80,7 @@ describe('demo scene', () => {
     const r = w.rivers[1];
     const h = computeRiverHydro(r, lib.forRiver(r), { endLevel: w.lakes[1].level });
     expect(h.falls.length).toBe(1);
-    expect(h.falls[0].height).toBeLessThan(10);
+    expect(h.falls[0].height).toBeLessThan(14);
     expect(h.samples.some((s) => s.kind === 'rapids')).toBe(true);
     expect(h.samples[h.samples.length - 1].level).toBeCloseTo(w.lakes[1].level, 0);
   });

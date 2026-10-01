@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { hash01 } from '../props/rules';
 import { flipZ } from '../core/world';
-import type { RiverSample } from './hydro';
+import { poolDims, type RiverSample } from './hydro';
 import type { RiverRuntime, WaterChunk, WaterTerrain } from './system';
 import { rockSize, type Obstacle, type RockPlacement } from './rocks';
 
@@ -26,7 +26,7 @@ export interface RiverChunkGeometry {
 }
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
-const MAX_EXTRA_M = 6;
+const MAX_EXTRA_M = 2.5;
 const BED_LIFT_M = 0.05;
 
 /** The highest ground within a mesh cell (±1.6 m) around the point: a strip laid on this never sinks into the terrain mesh,
@@ -45,9 +45,9 @@ export function groundAt(terrain: WaterTerrain, x: number, zThree: number): numb
 }
 
 /** How far to the left (−1) / right (+1) of the centre line the water reaches at a station: the shore. */
-function shoreExtent(terrain: WaterTerrain, s: RiverSample, side: -1 | 1): number {
+function shoreExtent(terrain: WaterTerrain, s: RiverSample, side: -1 | 1, maxExtra = MAX_EXTRA_M): number {
   let lat = s.width / 2;
-  const end = lat + MAX_EXTRA_M;
+  const end = lat + maxExtra;
   for (; lat < end; lat += 0.3) {
     const g = groundAt(terrain, s.pos.x + s.right.x * lat * side, s.pos.z + s.right.z * lat * side);
     // the shore is where the ground comes up to the water (the carve leaves a levee a hair above it; sampling must not step over it)
@@ -59,9 +59,20 @@ function shoreExtent(terrain: WaterTerrain, s: RiverSample, side: -1 | 1): numbe
 export function buildRiverChunk(rt: RiverRuntime, chunk: WaterChunk, terrain: WaterTerrain, external: readonly ExternalObstacle[] = []): RiverChunkGeometry {
   const S = rt.hydro.samples;
   const style = rt.style;
-  const n = chunk.i1 - chunk.i0 + 1;
+  const nAll = chunk.i1 - chunk.i0 + 1;
+  // the river that leaves a plunge pool starts at the pool's rim: the pool disc covers the rows inside
+  let r0 = 0;
+  if (chunk.kind === 'river' && S[chunk.i0].kind === 'fall') {
+    const f = rt.hydro.falls.find((x) => x.i1 === chunk.i0);
+    if (f) {
+      const R = poolDims(style, f).radius * 0.9;
+      while (r0 < nAll - 2 && Math.hypot(S[chunk.i0 + r0].pos.x - f.foot.x, S[chunk.i0 + r0].pos.z - f.foot.z) < R) r0++;
+    }
+  }
+  const i0 = chunk.i0 + r0;
+  const n = nAll - r0;
   let wmax = 0;
-  for (let i = chunk.i0; i <= chunk.i1; i++) wmax = Math.max(wmax, S[i].width);
+  for (let i = i0; i <= chunk.i1; i++) wmax = Math.max(wmax, S[i].width);
   const cols = clamp(Math.round(wmax / 1.1) + 4, 10, 36); // vertices across
 
   // ---- water surface ---------------------------------------------------------------------------------------
@@ -69,10 +80,18 @@ export function buildRiverChunk(rt: RiverRuntime, chunk: WaterChunk, terrain: Wa
   const aLat = new Float32Array(n * cols), aV = new Float32Array(n * cols), aDepth = new Float32Array(n * cols);
   const aTurb = new Float32Array(n * cols), aSpeed = new Float32Array(n * cols), aHalf = new Float32Array(n * cols);
   const aDir = new Float32Array(n * cols * 2);
+  const aRap = new Float32Array(n * cols), aSlope = new Float32Array(n * cols);
   const box = new THREE.Box3();
   for (let r = 0; r < n; r++) {
-    const s = S[chunk.i0 + r];
-    const left = shoreExtent(terrain, s, -1), right = shoreExtent(terrain, s, 1);
+    const s = S[i0 + r];
+    // rapids fade in and out over a few rows
+    let rapSum = 0, rapN = 0;
+    for (let q = Math.max(i0, i0 + r - 2); q <= Math.min(chunk.i1, i0 + r + 2); q++) { rapSum += S[q].kind === 'rapids' ? 1 : 0; rapN++; }
+    const rap = rapSum / rapN;
+    // next to a waterfall's lip the water is exactly as wide as the sheet: no wide plank over the gorge
+    const nearFall = S[Math.max(i0, i0 + r - 1)].kind === 'fall' || S[Math.min(chunk.i1, i0 + r + 1)].kind === 'fall' || s.kind === 'fall';
+    const extra = nearFall ? 0.35 : MAX_EXTRA_M;
+    const left = shoreExtent(terrain, s, -1, extra), right = shoreExtent(terrain, s, 1, extra);
     for (let j = 0; j < cols; j++) {
       const t = j / (cols - 1);
       // denser near the shores, where foam and depth change fastest
@@ -87,6 +106,7 @@ export function buildRiverChunk(rt: RiverRuntime, chunk: WaterChunk, terrain: Wa
       aDepth[i] = clamp(g === null ? s.depth * (1 - q * q) : s.level - g, -0.5, 40);
       aLat[i] = lat; aV[i] = s.s; aTurb[i] = s.turbulence; aSpeed[i] = s.speed; aHalf[i] = s.width / 2;
       aDir[i * 2] = s.tangent.x; aDir[i * 2 + 1] = s.tangent.z;
+      aRap[i] = rap; aSlope[i] = s.slope;
     }
   }
   const idx: number[] = [];
@@ -105,6 +125,8 @@ export function buildRiverChunk(rt: RiverRuntime, chunk: WaterChunk, terrain: Wa
   water.setAttribute('aSpeed', new THREE.BufferAttribute(aSpeed, 1));
   water.setAttribute('aHalf', new THREE.BufferAttribute(aHalf, 1));
   water.setAttribute('aDir', new THREE.BufferAttribute(aDir, 2));
+  water.setAttribute('aRap', new THREE.BufferAttribute(aRap, 1));
+  water.setAttribute('aSlope', new THREE.BufferAttribute(aSlope, 1));
   water.setIndex(idx);
   water.computeBoundingSphere();
 
@@ -114,14 +136,16 @@ export function buildRiverChunk(rt: RiverRuntime, chunk: WaterChunk, terrain: Wa
     const bcols = clamp(Math.round((wmax + 2 * style.banks.strip) / 0.9) + 2, 8, 48);
     const bpos = new Float32Array(n * bcols * 3), buv = new Float32Array(n * bcols * 2), bnrm = new Float32Array(n * bcols * 3);
     for (let r = 0; r < n; r++) {
-      const s = S[chunk.i0 + r];
+      const s = S[i0 + r];
       const half = s.width / 2 + style.banks.strip;
       for (let j = 0; j < bcols; j++) {
         const lat = -half + (2 * half * j) / (bcols - 1);
         const x = s.pos.x + s.right.x * lat, z = s.pos.z + s.right.z * lat;
-        const g = groundMaxAt(terrain, x, z);
+        // inside the channel the strip lies safely under the water (steps and waves must never show it); on the banks it stays above the coarse terrain mesh
+        const inChannel = Math.abs(lat) < (s.width / 2) * 0.85;
+        const g = inChannel ? (groundAt(terrain, x, z) ?? s.level - s.depth) - 0.2 : groundMaxAt(terrain, x, z);
         const i = r * bcols + j;
-        bpos[i * 3] = x; bpos[i * 3 + 1] = (g ?? s.level - s.depth) + BED_LIFT_M; bpos[i * 3 + 2] = z;
+        bpos[i * 3] = x; bpos[i * 3 + 1] = (g ?? s.level - s.depth) + (inChannel ? 0 : BED_LIFT_M); bpos[i * 3 + 2] = z;
         buv[i * 2] = lat + half; buv[i * 2 + 1] = s.s;
         bnrm[i * 3 + 1] = 1;
       }
@@ -149,14 +173,18 @@ export function buildRiverChunk(rt: RiverRuntime, chunk: WaterChunk, terrain: Wa
     return S[lo];
   };
   if (chunk.kind === 'river' && style.rocks.density > 0 && len > 0.5) {
-    const expected = (style.rocks.density * len) / 100;
+    // rapids are boulder fields
+    let rapRows = 0;
+    for (let i = chunk.i0; i <= chunk.i1; i++) if (S[i].kind === 'rapids') rapRows++;
+    const rapFrac = rapRows / (chunk.i1 - chunk.i0 + 1);
+    const expected = (style.rocks.density * len * (1 + 1.6 * rapFrac)) / 100;
     const count = Math.floor(expected) + (hash01(rt.seed, chunk.index, 9001) < expected - Math.floor(expected) ? 1 : 0);
     for (let k = 0; k < count; k++) {
       const h = (j: number): number => hash01(rt.seed, chunk.index * 131 + k, j);
       const s = s0 + len * h(1);
       const smp = sampleAt(s);
       const size = rockSize(style.rocks.min, style.rocks.max, h(2));
-      const inWater = h(3) < style.rocks.inWater;
+      const inWater = h(3) < style.rocks.inWater + (1 - style.rocks.inWater) * 0.5 * rapFrac;
       const hw = smp.width / 2;
       const side = h(4) < 0.5 ? -1 : 1;
       let lat: number;

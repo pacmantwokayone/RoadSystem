@@ -212,7 +212,7 @@ export function computeRiverHydro(def: RiverDef, style: WaterStyle, opts: HydroO
     }
     // ordinary reach / rapids: samples every ~baseStep, the first sample of the segment only if it isn't the previous one's end
     const run = runs[runOf[seg]];
-    const count = Math.max(1, Math.round(len / baseStep));
+    const count = Math.max(1, Math.round(len / (kinds[seg] === 'rapids' ? Math.min(baseStep, 1.2) : baseStep)));
     for (let i = seg === 0 || kinds[seg - 1] === 'fall' ? 0 : 1; i <= count; i++) {
       const t = i / count;
       const s = a + len * t;
@@ -252,4 +252,12 @@ export function sampleIndexAt(h: RiverHydro, s: number): number {
   let lo = 0, hi = a.length - 1;
   while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (a[mid].s <= s) lo = mid; else hi = mid; }
   return Math.abs(a[lo].s - s) <= Math.abs(a[hi].s - s) ? lo : hi;
+}
+
+/** Size of the plunge pool at the foot of a fall: wider and deeper the higher the water falls. */
+export function poolDims(style: WaterStyle, f: Pick<FallInfo, 'width' | 'height' | 'run'>): { radius: number; depth: number } {
+  // never so wide that it reaches back to the lip
+  const radius = clamp(Math.max(5, f.width * style.fall.poolRadius, 1.5 * Math.sqrt(f.height)), 5, Math.max(5, Math.min(42, f.run * 0.5)));
+  const depth = Math.max(style.fall.poolDepth, Math.min(14, 1 + f.height * 0.035));
+  return { radius, depth };
 }

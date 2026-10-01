@@ -305,7 +305,7 @@ renderer.setAnimationLoop(() => {
 });
 
 (window as unknown as Record<string, unknown>).__demo = {
-  waterSystem, waterLayer, waterLibrary, WATER_DEMO_VIEWS, editor, library, materials, materialLibrary, propLayer, signalLayer, bridgeLayer, bridgeLibrary,
+  renderer, scene, camera, waterSystem, waterLayer, waterLibrary, WATER_DEMO_VIEWS, editor, library, materials, materialLibrary, propLayer, signalLayer, bridgeLayer, bridgeLibrary,
   stats: () => ({ roads: system.stats(), tiles: terrain.loadStats(), meshes: meshLayer.meshCount, propMeshes: propLayer.meshCount, props: propLayer.allPlacements().length, count: editor.model.list.length, nodes: editor.model.nodeList.length, junctions: system.junctionStats(), dirty: editor.isDirty }),
   /** screen position (px) of a sim-space ground point, for scripted clicks */
   project(x: number, z: number): { x: number; y: number } {
