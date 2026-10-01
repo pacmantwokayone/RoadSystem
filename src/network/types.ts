@@ -64,6 +64,9 @@ export interface RoadDef {
   profile: string;
   /** Parameter overrides for the profile's `params` schema. */
   params?: Record<string, number | boolean | string>;
+  /** Name of the bridge type (bridge library) used for this road's bridge sections; default: by the profile's rank. */
+  bridge?: string;
+  bridgeParams?: Record<string, number | boolean | string>;
   points: RoadPoint[];
   /** junction at the first / last point (NodeDef.id) */
   startNode?: string;

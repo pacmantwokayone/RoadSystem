@@ -132,6 +132,26 @@ describe.skipIf(!phpOk)('HttpRoadStore ↔ reference PHP backend', () => {
     expect(bad).toBe(400);
   });
 
+  it('bridge types travel with the library document, and the road keeps its bridge fields', async () => {
+    const lib = await store.loadLibrary();
+    const rev = lib!.revision!;
+    const src = "export default (p, B) => B.bridge('x').deck({ thickness: 1.1 }).railing('parapet');";
+    const r = await store.saveLibrary({ version: 1, profiles: lib!.profiles, materials: lib!.materials, bridges: { meinesteg: src } }, rev);
+    expect(r.ok).toBe(true);
+    const back = await store.loadLibrary();
+    expect(back!.bridges!.meinesteg).toBe(src);
+    expect(back!.materials!.kantonsrot).toContain('M.paint'); // earlier parts of the document are untouched
+    const bad = (await fetch(`${rw.base}/roadlib-save.php`, { method: 'POST', body: JSON.stringify({ profiles: {}, bridges: { '../x': 'code' } }) })).status;
+    expect(bad).toBe(400);
+    const road = { id: 'b1', name: 'b1', profile: 'hauptstrasse', bridge: 'meinesteg', bridgeParams: { maxSpan: 20 }, points: [{ x: 0, y: 0, z: 0 }, { x: 100, y: 0, z: 0, mode: 'bridge' }, { x: 200, y: 0, z: 0, mode: 'bridge' }, { x: 300, y: 0, z: 0 }] };
+    const saved = await store.saveRoads('brtest', { version: 1, roads: [road] } as never);
+    expect(saved.ok).toBe(true);
+    const loaded = await store.loadRoads('brtest');
+    expect(loaded!.roads[0].bridge).toBe('meinesteg');
+    expect(loaded!.roads[0].bridgeParams).toEqual({ maxSpan: 20 });
+    expect(loaded!.roads[0].points[1].mode).toBe('bridge');
+  });
+
   it('rejects invalid input', async () => {
     const bad = async (body: unknown): Promise<number> => (await fetch(`${rw.base}/roads-save.php`, { method: 'POST', body: JSON.stringify(body) })).status;
     expect(await bad({ location: '../etc/passwd', roads: [] })).toBe(400);

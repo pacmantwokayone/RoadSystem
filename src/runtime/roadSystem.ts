@@ -15,6 +15,7 @@ import { armsByNode, normalizeNetwork, type Arm } from '../network/graph';
 import { layoutJunction, type ArmSpec, type Layout } from '../network/junction';
 import type { TerrainSource } from '../core/terrain';
 import type { ProfileData } from '../profile/types';
+import { DEFAULT_BRIDGE, type BridgeData } from '../structures/types';
 import { RoadRuntime, DEFAULT_RUNTIME_OPTIONS, type RoadChunk, type RoadRuntimeOptions } from './roadRuntime';
 import { JunctionRuntime, type JunctionArm } from './junctionRuntime';
 
@@ -33,6 +34,7 @@ export type ReplacedListener = (previous: RoadRuntime, next: RoadRuntime) => voi
 export type JunctionListener = (junction: JunctionRuntime) => void;
 export type JunctionReplacedListener = (previous: JunctionRuntime, next: JunctionRuntime) => void;
 export type ProfileResolver = (def: RoadDef) => ProfileData;
+export type BridgeResolver = (def: RoadDef, profile: ProfileData) => BridgeData;
 
 /** centre-line curves per (immutable) road definition: unchanged roads keep their object identity across edits */
 const curveCache = new WeakMap<RoadDef, PathCurve>();
@@ -67,6 +69,8 @@ export class RoadSystem {
     private readonly terrain: TerrainSource,
     private readonly resolveProfile: ProfileResolver,
     private readonly opts: RoadRuntimeOptions = DEFAULT_RUNTIME_OPTIONS,
+    /** bridge type of a road (defaults to a plain concrete deck) */
+    private readonly resolveBridge: BridgeResolver = () => DEFAULT_BRIDGE,
   ) {}
 
   get runtimes(): readonly RoadRuntime[] {
@@ -134,12 +138,13 @@ export class RoadSystem {
     for (const def of net.roads) {
       const trim = trims.get(def.id) ?? { start: 0, end: 0 };
       const prof = profiles.get(def.id)!;
+      const bridge = this.resolveBridge(def, prof);
       const old = oldById.get(def.id);
-      if (old && old.def === def && old.profile === prof && old.trim.start === trim.start && old.trim.end === trim.end) {
+      if (old && old.def === def && old.profile === prof && old.bridge === bridge && old.trim.start === trim.start && old.trim.end === trim.end) {
         nextRoads.push(old);
         continue;
       }
-      const rt = new RoadRuntime(def, this.terrain, prof, this.opts, trim);
+      const rt = new RoadRuntime(def, this.terrain, prof, this.opts, trim, bridge);
       nextRoads.push(rt);
       if (old) replaced.push([old, rt]);
     }

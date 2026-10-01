@@ -11,6 +11,11 @@ import * as THREE from 'three';
 import type { RoadSystem } from '../runtime/roadSystem';
 import type { ProfileLibrary } from '../profile/library';
 import type { MaterialRegistry } from '../surface/materials';
+import type { BridgeLibrary } from '../structures/library';
+import { BRIDGE_PRESET_SOURCES } from '../structures/presets';
+import { applyBridgeProposal, suggestBridges, type BridgeProposal, type RiverLike } from '../structures/suggest';
+import type { TerrainSource } from '../core/terrain';
+import { defaultBridgeName } from '../structures/types';
 import { DEFAULT_MATERIAL_SOURCES, type MaterialLibrary } from '../surface/materialLibrary';
 import type { RoadStore } from '../store/types';
 import { cloneRoad } from '../network/doc';
@@ -40,6 +45,12 @@ export interface EditorDeps {
   materials: MaterialRegistry;
   /** code-based materials (editable in the editor); when given, `materials` is bound to it */
   materialLibrary?: MaterialLibrary;
+  /** code-based bridge types; when given, the editor edits and saves them and rebuilds roads when they change */
+  bridgeLibrary?: BridgeLibrary;
+  /** rivers to check roads against (SIM space polylines); enables the bridge proposals */
+  rivers?: RiverLike[];
+  /** terrain for deck heights of proposals (optional) */
+  terrain?: TerrainSource;
   store: RoadStore;
   location: string;
   /** road meshes (RoadMeshLayer.group): lets clicks hit the road surface, not just the terrain behind it */
@@ -78,6 +89,9 @@ export class RoadEditor {
   private readonly confirmFn: (m: string) => boolean;
   private readonly roadGroup: THREE.Object3D | undefined;
   readonly materialLibrary: MaterialLibrary | undefined;
+  readonly bridgeLibrary: BridgeLibrary | undefined;
+  private rivers: RiverLike[] = [];
+  private readonly terrain: TerrainSource | null;
   readonly materials: MaterialRegistry;
   private listeners = new Set<() => void>();
   private draft: RoadDef | null = null;
@@ -112,6 +126,12 @@ export class RoadEditor {
     this.host.scene.add(this.handles);
     this.materials = deps.materials;
     this.materialLibrary = deps.materialLibrary;
+    this.bridgeLibrary = deps.bridgeLibrary;
+    this.rivers = deps.rivers ?? [];
+    this.terrain = deps.terrain ?? null;
+    if (this.bridgeLibrary) {
+      this.cleanups.push(this.bridgeLibrary.onChange(() => { this.system.refresh(); this.emit(); }));
+    }
     if (this.materialLibrary) {
       this.cleanups.push(deps.materials.bind(this.materialLibrary));
       this.cleanups.push(this.materialLibrary.onChange(() => this.emit()));
@@ -178,6 +198,7 @@ export class RoadEditor {
     if (lib) {
       for (const [name, src] of Object.entries(lib.profiles)) this.library.setSource(name, src);
       for (const [name, src] of Object.entries(lib.materials ?? {})) this.materialLibrary?.setSource(name, src);
+      for (const [name, src] of Object.entries(lib.bridges ?? {})) this.bridgeLibrary?.setSource(name, src);
       this.libraryRevision = lib.revision;
     }
     const doc = await this.store.loadRoads(this.location);
@@ -191,7 +212,7 @@ export class RoadEditor {
     let ok = true;
     if (this.state.libraryDirty) {
       ok = await this.saveWithConflict(
-        (base) => this.store.saveLibrary({ version: 1, profiles: this.library.allSources(), ...(this.materialLibrary ? { materials: this.materialLibrary.allSources() } : {}) }, base),
+        (base) => this.store.saveLibrary({ version: 1, profiles: this.library.allSources(), ...(this.materialLibrary ? { materials: this.materialLibrary.allSources() } : {}), ...(this.bridgeLibrary ? { bridges: this.bridgeLibrary.allSources() } : {}) }, base),
         this.libraryRevision, 'Profile',
         (rev) => { this.libraryRevision = rev; this.state.libraryDirty = false; },
       );
@@ -375,6 +396,68 @@ export class RoadEditor {
     const r = this.library.setSource(name, source);
     if (r.ok) { this.state.libraryDirty = true; this.emit(); }
     return r;
+  }
+
+  // ---- bridges ---------------------------------------------------------------
+
+  /** Compile and activate bridge code. On error the previous version stays active. */
+  applyBridgeSource(name: string, source: string): { ok: boolean; error?: string } {
+    if (!this.bridgeLibrary) return { ok: false, error: 'no bridge library' };
+    const r = this.bridgeLibrary.setSource(name, source);
+    if (r.ok) { this.state.libraryDirty = true; this.emit(); }
+    return r;
+  }
+
+  resetBridgeToPreset(name: string): boolean {
+    const src = BRIDGE_PRESET_SOURCES[name];
+    return !!src && this.applyBridgeSource(name, src).ok;
+  }
+
+  duplicateBridge(from: string, newName: string): { ok: boolean; error?: string } {
+    const src = this.bridgeLibrary?.getSource(from);
+    if (src === undefined) return { ok: false, error: `Brücke '${from}' nicht gefunden` };
+    if (!/^[a-z][a-z0-9_-]*$/i.test(newName)) return { ok: false, error: 'Name: Buchstaben, Ziffern, _ oder -; muss mit Buchstaben beginnen' };
+    if (this.bridgeLibrary!.has(newName)) return { ok: false, error: `Brücke '${newName}' existiert bereits` };
+    return this.applyBridgeSource(newName, src);
+  }
+
+  setRivers(rivers: RiverLike[]): void {
+    this.rivers = rivers;
+    this.emit();
+  }
+
+  get hasRivers(): boolean {
+    return this.rivers.length > 0;
+  }
+
+  /** Roads that cross a river without a bridge. */
+  bridgeProposals(): BridgeProposal[] {
+    return suggestBridges(this.model.list, this.rivers, this.terrain);
+  }
+
+  /** Sets the bridge for a proposal — one undo step — and selects the road. */
+  applyBridgeProposal(p: BridgeProposal): void {
+    this.model.transact('Brücke setzen', (d) => { applyBridgeProposal(d, p); });
+    this.selectRoad(p.roadId);
+  }
+
+  /** The bridge type a road uses for its bridge sections (named, or the default for its profile). */
+  effectiveBridgeName(road: RoadDef): string {
+    return road.bridge ?? defaultBridgeName(this.library.resolve(road.profile, road.params));
+  }
+
+  setRoadBridge(name: string | undefined): void {
+    const id = this.state.roadId;
+    if (!id) return;
+    this.model.transact('Brückentyp ändern', (d) => d.editRoad(id, (r) => {
+      if (name === undefined) { delete r.bridge; delete r.bridgeParams; } else { r.bridge = name; delete r.bridgeParams; }
+    }));
+  }
+
+  setBridgeParam(key: string, value: number | boolean | string): void {
+    const id = this.state.roadId;
+    if (!id) return;
+    this.model.transact('Brücken-Parameter ändern', (d) => d.editRoad(id, (r) => { r.bridgeParams = { ...(r.bridgeParams ?? {}), [key]: value }; }), `bparam:${id}:${key}`);
   }
 
   // ---- material code (live) --------------------------------------------------

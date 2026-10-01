@@ -38,6 +38,11 @@ export class PropMaterials {
     this.overrides.set(name, typeof material === 'function' ? material : () => material);
   }
 
+  /** true for names this registry knows how to make (built-ins, overrides and sign faces) */
+  has(name: string): boolean {
+    return name in DEFAULT_PROP_MATERIALS || this.overrides.has(name) || name.startsWith('sign:');
+  }
+
   get(name: string): THREE.Material {
     let m = this.cache.get(name);
     if (m) return m;

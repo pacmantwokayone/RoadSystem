@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
-  MockStreamTerrain, RoadSystem, RoadDebugLayer, RoadMeshLayer, PropLayer, SignalLayer, GeometryBatch, placementMatrix, SIGN_CATALOG, ProfileLibrary, MaterialRegistry, MaterialLibrary,
+  MockStreamTerrain, RoadSystem, RoadDebugLayer, RoadMeshLayer, PropLayer, SignalLayer, BridgeLayer, BridgeLibrary, GeometryBatch, placementMatrix, SIGN_CATALOG, ProfileLibrary, MaterialRegistry, MaterialLibrary,
   StorageStore, MemoryStore, type RoadDef, type RoadStore,
 } from 'roadsystem';
 import { RoadEditor, mountEditorPanels } from 'roadsystem/editor';
@@ -38,9 +38,27 @@ const ravine = (x: number, z: number): number => {
   const edge = (e0: number, e1: number, v: number): number => Math.min(1, Math.max(0, (v - e0) / (e1 - e0)));
   return 800 - 28 * edge(a, a + 3, m) * (1 - edge(110, 114, m));
 };
+// ?bridges=1 → six gorges, one per bridge type (rows at sim z = 2400, 2500, …); the bridges cross at x = 3300
+const BRIDGE_ROWS: Array<{ profile: string; bridge: string; depth: number; sigma: number }> = [
+  { profile: 'wanderweg', bridge: 'holzsteg', depth: 5, sigma: 10 },
+  { profile: 'gemeindestrasse', bridge: 'plattenbruecke', depth: 9, sigma: 14 },
+  { profile: 'kantonsstrasse', bridge: 'balkenbruecke', depth: 22, sigma: 30 },
+  { profile: 'autobahn', bridge: 'viadukt', depth: 38, sigma: 60 },
+  { profile: 'hauptstrasse', bridge: 'bogenbruecke', depth: 26, sigma: 34 },
+  { profile: 'hauptstrasse', bridge: 'fachwerkbruecke', depth: 16, sigma: 28 },
+];
+const gorge = (x: number, z: number): number => {
+  let h = 800;
+  BRIDGE_ROWS.forEach((r, i) => { h -= r.depth * Math.exp(-(((x - 3300) / r.sigma) ** 2)) * Math.exp(-(((z - (2400 + 100 * i)) / 38) ** 2)); });
+  return h;
+};
+// ?rivers=1 → a winding river with a shallow valley; roads that cross it can get a bridge proposed (Brücke tab)
+const RIVER_X = (z: number): number => 3300 + 45 * Math.sin(z / 140);
+const demoRivers = qp.get('rivers') ? [{ id: 'aare', name: 'Aare', width: 14, points: Array.from({ length: 41 }, (_, i) => { const z = 2700 + i * 15; return { x: RIVER_X(z), z }; }) }] : [];
+const riverbed = (x: number, z: number): number => 800 - 7 * Math.exp(-(((x - RIVER_X(z)) / 28) ** 2));
 const terrain = new MockStreamTerrain({
   buildMeshes: true, loadLatencyFrames: Number(qp.get('lat') ?? 25),
-  ...(qp.get('cliff') ? { heightFn: ravine } : qp.get('flat') ? { heightFn: () => 800 } : {}),
+  ...(qp.get('rivers') ? { heightFn: riverbed } : qp.get('bridges') ? { heightFn: gorge } : qp.get('cliff') ? { heightFn: ravine } : qp.get('flat') ? { heightFn: () => 800 } : {}),
 });
 scene.add(terrain.group);
 
@@ -48,13 +66,16 @@ const library = new ProfileLibrary();
 const materials = new MaterialRegistry();
 const materialLibrary = new MaterialLibrary(); // materials as editable code; the editor binds the registry to it
 materials.setWeather({ wet: Number(qp.get('wet') ?? 0), snow: Number(qp.get('snow') ?? 0), age: Number(qp.get('age') ?? 0.3) });
-const system = new RoadSystem(terrain, (d) => library.resolve(d.profile, d.params));
+const bridgeLibrary = new BridgeLibrary();
+const system = new RoadSystem(terrain, (d) => library.resolve(d.profile, d.params), undefined, (d, p) => bridgeLibrary.forRoad(d, p));
 const meshLayer = new RoadMeshLayer(system, materials);
 scene.add(meshLayer.group);
 // ?props=0 → no props (lamps, signs, guardrails …)
 const propLayer = new PropLayer(system, { drawDistance: Number(qp.get('propDist') ?? 900) });
 propLayer.group.visible = qp.get('props') !== '0';
 scene.add(propLayer.group);
+const bridgeLayer = new BridgeLayer(system, materials, { drawDistance: Number(qp.get('propDist') ?? 1500) });
+scene.add(bridgeLayer.group);
 // traffic lights follow wall-clock time (?t=12 freezes them at 12 s, ?sigspeed=5 runs them faster)
 const signalLayer = new SignalLayer(system, { drawDistance: Number(qp.get('propDist') ?? 900) });
 signalLayer.group.visible = qp.get('props') !== '0';
@@ -107,7 +128,7 @@ const editor = new RoadEditor({
       return ray.intersectObjects(terrain.group.children.filter((c) => c.visible), false)[0]?.point ?? null;
     },
   },
-  system, library, materials, materialLibrary, store, location: LOCATION, roadGroup: meshLayer.group,
+  system, library, materials, materialLibrary, bridgeLibrary, terrain, rivers: demoRivers, store, location: LOCATION, roadGroup: meshLayer.group,
 });
 mountEditorPanels(editor, document.body, { library, materials });
 void (async () => {
@@ -143,6 +164,27 @@ if (qp.get('net')) {
     P('w-b', 'hauptstrasse', [[3300, 3500], [3400, 3495], [3500, 3500]], { startNode: 'W' }),
   ];
   setTimeout(() => editor.model.load({ version: 1, roads, nodes }), 800);
+}
+
+// ?rivers=1 → two roads across the river, no bridges yet
+if (qp.get('rivers')) {
+  const mkRoad = (id: string, profile: string, z: number): RoadDef => ({ id, name: id, profile, points: [3050, 3180, 3420, 3560].map((x) => ({ x, y: 800, z: z + (x - 3300) * 0.04 })) });
+  const roads = [mkRoad('Landstrasse', 'hauptstrasse', 3000), mkRoad('Dorfstrasse', 'gemeindestrasse', 3180), mkRoad('Wanderweg', 'wanderweg', 2860)];
+  setTimeout(() => editor.model.load({ version: 1, roads }), 800);
+}
+
+// ?bridges=1 → one road per bridge type, each crossing its own gorge
+if (qp.get('bridges')) {
+  const roads: RoadDef[] = BRIDGE_ROWS.map((r, i) => {
+    const z = 2400 + 100 * i;
+    const x0 = 3300 - r.sigma * 2.3, x1 = 3300 + r.sigma * 2.3;
+    const xs = [3000, 3150, x0, (x0 + x1) / 2, x1, 3450, 3600].filter((x, k, a) => k === 0 || x > a[k - 1]);
+    return {
+      id: `b-${r.bridge}`, name: r.bridge, profile: r.profile, bridge: r.bridge,
+      points: xs.map((x) => ({ x, y: 800, z, ...(x >= x0 && x <= x1 ? { mode: 'bridge' as const } : {}) })),
+    };
+  });
+  setTimeout(() => editor.model.load({ version: 1, roads }), 800);
 }
 
 // ?signals=1 → crossing with traffic lights: Kantonsstrasse × Dorfstrasse, pavements, zebra crossings, pedestrian lights
@@ -230,6 +272,7 @@ let frame = 0;
 renderer.setAnimationLoop(() => {
   controls.update();
   propLayer.update(camera);
+  bridgeLayer.update(camera);
   signalLayer.update(frozenT ?? (performance.now() / 1000) * sigSpeed, camera);
   // the "player" is the orbit target; the terrain streams around it (sim z = -three z)
   terrain.update(controls.target.x, -controls.target.z);
@@ -240,14 +283,14 @@ renderer.setAnimationLoop(() => {
     const st = system.stats();
     const ts = terrain.loadStats();
     hud.textContent =
-      `RoadSystem – Phase 7 (Ampeln, Fussgängerstreifen, Haltelinien)\n` +
+      `RoadSystem – Phase 8 (Brücken)\n` +
       `Straßen: ${editor.model.list.length}   Kreuzungen: ${system.junctionStats().ready}/${system.junctionStats().total}   Chunks: ${st.ready}/${st.chunks}\n` +
       `Terrain-Kacheln: ${ts.ready} geladen / ${ts.known} bekannt`;
   }
 });
 
 (window as unknown as Record<string, unknown>).__demo = {
-  editor, library, materials, materialLibrary, propLayer, signalLayer,
+  editor, library, materials, materialLibrary, propLayer, signalLayer, bridgeLayer, bridgeLibrary,
   stats: () => ({ roads: system.stats(), tiles: terrain.loadStats(), meshes: meshLayer.meshCount, propMeshes: propLayer.meshCount, props: propLayer.allPlacements().length, count: editor.model.list.length, nodes: editor.model.nodeList.length, junctions: system.junctionStats(), dirty: editor.isDirty }),
   /** screen position (px) of a sim-space ground point, for scripted clicks */
   project(x: number, z: number): { x: number; y: number } {

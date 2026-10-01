@@ -27,8 +27,8 @@ POST roads-save.php                       Body { location, roads, nodes?, baseRe
                                           200 { ok: true, revision }
                                           409 { ok: false, conflict: true, revision }   ← Server ist weiter
                                           400 ungültige Eingabe · 403 keine Editor-Rechte · 413 zu groß
-GET  roadlib-save.php                     200 { profiles: { name: source }, materials: { name: source }, revision }  404 = leer
-POST roadlib-save.php                     Body { profiles, materials?, baseRevision? }  (Antworten wie oben)
+GET  roadlib-save.php                     200 { profiles, materials, bridges: { name: source }, revision }  404 = leer
+POST roadlib-save.php                     Body { profiles, materials?, bridges?, baseRevision? }  (Antworten wie oben)
 ```
 
 - `nodes` = Kreuzungen (`{ id, x, y, z, radius?, control?, crosswalks?, signalMode?, greenS? }` — die letzten vier steuern Vortritt, Fussgängerstreifen und Ampeln, siehe `docs/PLAN.md` 2h; der Server speichert sie unverändert, der Client validiert beim Laden); Straßen verweisen per `startNode`/`endNode` darauf. Beides gehört in dasselbe Dokument

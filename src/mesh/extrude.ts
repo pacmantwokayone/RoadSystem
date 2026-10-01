@@ -116,6 +116,7 @@ export function buildChunkGeometry(
   };
 
   const wallBottom = new THREE.Vector3();
+  const bridgeRing: boolean[] = new Array(nRings).fill(false);
   const caps: Array<{ start: boolean; tops: THREE.Vector3[]; bottoms: THREE.Vector3[]; us: number[]; normal: THREE.Vector3 }> = [];
   for (let r = 0; r < nRings; r++) {
     const i = chunk.i0 + r;
@@ -125,31 +126,34 @@ export function buildChunkGeometry(
     const vary = profile.vary?.({ s: sample.s, seed: rt.seed });
     const wMul = sample.widthScale * (vary?.widthMul ?? 1);
     const offX = vary?.offsetX ?? 0;
+    const onBridge = sample.mode === 'bridge';
+    bridgeRing[r] = onBridge;
+    const pts = onBridge ? rt.bridgePoints() : profile.points;
 
     // cross-section x positions, with the inside of tight turns clamped (no self-overlap)
     const k = sample.curvature;
     const limit = Math.abs(k) > 1e-6 ? opts.innerCurveLimit / Math.abs(k) : Infinity;
     for (let m = 0; m < M; m++) {
-      let x = profile.points[m].x * wMul;
+      let x = pts[m].x * wMul;
       const inner = (k > 0 && x < 0) || (k < 0 && x > 0);
       if (inner && Math.abs(x) > limit) x = Math.sign(x) * limit;
       xs[m] = x + offX;
       tp[m].set(
-        sample.pos.x + frame.right.x * xs[m] + frame.up.x * profile.points[m].y,
-        cy + frame.right.y * xs[m] + frame.up.y * profile.points[m].y,
-        sample.pos.z + frame.right.z * xs[m] + frame.up.z * profile.points[m].y,
+        sample.pos.x + frame.right.x * xs[m] + frame.up.x * pts[m].y,
+        cy + frame.right.y * xs[m] + frame.up.y * pts[m].y,
+        sample.pos.z + frame.right.z * xs[m] + frame.up.z * pts[m].y,
       );
     }
     us[0] = 0;
     for (let m = 1; m < M; m++) {
-      us[m] = us[m - 1] + Math.hypot(xs[m] - xs[m - 1], profile.points[m].y - profile.points[m - 1].y);
+      us[m] = us[m - 1] + Math.hypot(xs[m] - xs[m - 1], pts[m].y - pts[m - 1].y);
     }
 
     const base = r * V;
     // top segments
     for (let seg = 0; seg < S; seg++) {
       const dx = xs[seg + 1] - xs[seg];
-      const dy = profile.points[seg + 1].y - profile.points[seg].y;
+      const dy = pts[seg + 1].y - pts[seg].y;
       const len = Math.hypot(dx, dy);
       const nx = len > 1e-9 ? -dy / len : 0;
       const ny = len > 1e-9 ? dx / len : 1;
@@ -170,6 +174,8 @@ export function buildChunkGeometry(
     if (horizR.lengthSq() < 1e-8) horizR.set(1, 0, 0);
     horizR.normalize();
     const bottomY = (top: THREE.Vector3, groundY: number): number => {
+      // a bridge is a slab in the air: it is as thick as its deck, whatever lies below
+      if (onBridge) return top.y - rt.bridge.deck.thickness;
       const byThickness = top.y - profile.thickness;
       const wanted = Number.isFinite(groundY) ? Math.min(byThickness, groundY - opts.wallMarginM) : byThickness;
       return Math.max(wanted, top.y - opts.maxWallDepthM);
@@ -221,7 +227,7 @@ export function buildChunkGeometry(
     for (let seg = 0; seg < S; seg++) {
       quad(listFor(profile.segments[seg].material), b0 + seg * 2, b0 + seg * 2 + 1, b1 + seg * 2, b1 + seg * 2 + 1);
     }
-    const body = listFor(profile.bodyMaterial);
+    const body = listFor(bridgeRing[r] && bridgeRing[r + 1] ? rt.bridge.deck.material : profile.bodyMaterial);
     const w = S * 2;
     quad(body, b0 + w, b0 + w + 1, b1 + w, b1 + w + 1);
     quad(body, b0 + w + 2, b0 + w + 3, b1 + w + 2, b1 + w + 3);

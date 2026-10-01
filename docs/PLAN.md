@@ -309,7 +309,7 @@ fehlend an Chunk-Grenzen), Zufall deterministisch (Strassen-Seed + Regel + Index
 Markierungen ⇒ Props stehen exakt auf der Oberfläche; ausserhalb des Profils auf dem Terrain. Nahe Knoten (6 m) keine Props.
 
 **Leitplanken.** Auto-Regel: Rail dort, wo das Terrain innerhalb 6 m neben der Schiene ≥ `minDrop` (1.8 m) abfällt, oder ≥ `minDropBend`
-(0.9 m) auf der Aussenseite einer Kurve mit R < `bendRadius`; Brücken (`bridge`) sind standardmässig eingeschlossen. Läufe: Lücken < 14 m
+(0.9 m) auf der Aussenseite einer Kurve mit R < `bendRadius`; Brücken (`bridge`) bringen ab Phase 8 ihr eigenes Geländer mit und sind ausgeschlossen. Läufe: Lücken < 14 m
 überbrückt, Läufe < 8 m verworfen, 8 m Vor-/Nachlauf. Varianten `steel` (W-Profil, abgesenktes Endstück), `concrete` (New-Jersey, Endstück
 läuft aus), `wood`, `cable`. Schiene = extrudiertes Querprofil mit analytischen Normalen (naht-konsistent), Pfosten = normale Placements.
 
@@ -380,6 +380,58 @@ die obere oder untere Höhe → Patch-Kante und Trottoir-Höhe an der linken Arm
   ~2 m werden im Editor nicht verhindert. Zwischen Strassen mit unterschiedlichem Trottoir-Niveau gibt es keine Rampen/Absenkungen.
 - Der Patch hat noch keine Fahrspur-Führungslinien (Abbiegepfeile, Leitlinien durch die Kreuzung).
 - Kreisel, Auf-/Abfahrten: Phase 11.
+
+---
+
+## 2i. Umsetzungsnotizen Phase 8 (Brücken)
+
+**Eine Brücke ist ein Abschnitt einer Strasse**: aufeinanderfolgende Punkte mit `mode: 'bridge'` (immer fest in der Höhe). Der Abschnitt
+beginnt und endet jetzt **exakt auf diesen Punkten** (vorher: halbe Strecke zum Nachbarpunkt) — dort stehen die Widerlager. Zwei
+verschiedene Bauwerksmodi direkt nebeneinander (Brücke → Tunnel) schnappen weiterhin zum näheren Ende.
+
+**Brücken als Code** (wie Profile/Materialien): `export default (p, B) => B.bridge('Name').deck(…).girders(…).piers(…).abutments(…).railing(…)`
+plus `.arch(…)`, `.truss(…)`, `.lamps(…)`; `export const params` erzeugt die Parameter-UI. Alle Optionen werden validiert/geklemmt
+(`BridgeBuilder.finish`). `BridgeLibrary`: letzte funktionierende Version bleibt bei Fehlern, Auswertung pro (Name, Parameter) gecacht
+(Objekt-Identität stabil → der Diff im `RoadSystem` baut nur die betroffenen Strassen neu). 6 Typen: **Holzsteg** (Wanderwege),
+**Plattenbrücke** (Bäche), **Balkenbrücke** (Längsträger, Hammerpfeiler), **Viadukt** (Kastenträger, Zwillingspfeiler), **Bogenbrücke**
+(Steinbögen, Zwickelstützen oder massiver Zwickel), **Fachwerkbrücke** (Stahlfachwerk). `RoadDef.bridge` / `bridgeParams` wählen den
+Typ; ohne Angabe passt der Typ zum Rang des Profils (`defaultBridgeName`). Gespeichert wird im Bibliotheksdokument
+(`roadlib-save.php` trägt `bridges` mit; Schreiben nur für Editoren — Code ist ausführbar).
+
+**Deck.** Der Strassenkörper ist auf Brücken eine **Platte** der Dicke `deck.thickness` (statt Wände bis zum Terrain), seitlich auf
+die Fahrbahn (`core`) beschnitten: Bankett/Graben fallen weg (gleiche Punktzahl, die Aussenpunkte kollabieren auf die Kante, damit ein
+Chunk Strassen- und Brückenringe mischen kann); Material der Unterseite = `deck.material`. Brücken-Samples lesen das Terrain
+trotzdem (Pfeiler brauchen es), ihre Höhe folgt ihm nie.
+
+**Bauwerk** (`structures/bridgeGeometry.ts`, alles aus **Lofts** konvexer Ringe, analytische Normalen, UVs in Metern): Längsträger,
+Pfeiler (Säule/Wand/Zwilling/Hammer, rund/eckig, Anzug, Querriegel, Fundament; wachsen bis zum Terrain, Spannweiten teilen den Abschnitt
+gleichmässig — nur vom Abschnitt abhängig, nie vom Chunk), Widerlager + Flügelmauern (oben Fahrbahnkante, unten Terrain), Geländer
+(Stahl, Brüstung, Holz), Bogenrippen + Zwickel, Fachwerk (Warren, Querriegel), Laternen. **Nahtregeln:** kontinuierliche Teile aus den
+Ring-Samples des Chunks (die gemeinsame Randsample ⇒ nahtlos), diskrete Teile gehören dem Chunk, der ihre Position enthält, das
+Fachwerk teilt jeden Chunk in ganze Felder (ein Knoten liegt immer auf der Chunk-Grenze). `BridgeLayer` spiegelt `PropLayer`
+(zusammengeführtes Mesh pro Chunk, Ersetzen/Entfernen, Wiederholung bei noch unbekanntem Terrain, Sichtweite).
+
+**Flusskreuzungs-Vorschlag** (`structures/suggest.ts`): `suggestBridges(roads, rivers, terrain)` mit `RiverLike` (Polylinie in SIM-Koordinaten +
+Breite — unabhängig vom Spielcode): Schnittpunkte Strasse × Fluss, Mäander (< 40 m) zu einer Kreuzung zusammengefasst, Länge = Flussbreite +
+2 × 8 m (min. 14 m), Deckhöhe = Höhe an den Ufern, angehoben bis das Deck das Terrain dazwischen um 1.2 m überragt. `applyBridgeProposal` setzt
+neue Punkte an den Ufern (vorhandene in der Nähe werden wiederverwendet), wandelt die Punkte dazwischen um — **ein Undo-Schritt**. Editor:
+Tab „Brücke“ (Code + Typwahl + Liste der Kreuzungen mit „Brücke setzen“), Strassen-Inspector (Typ + Parameter).
+
+**Gefundene und behobene Fehler:** (1) `cloneRoad` verlor unbekannte Strassenfelder (`bridge`/`bridgeParams`) bei jeder Bearbeitung/Speicherung;
+(2) Annäherungsrampen zu einem festen Punkt (Brückenende) mischten Terrain- und Entwurfshöhe und konnten **unter** dem Terrain liegen →
+gemischte Samples werden jetzt nie unter Terrain + Abstand gedrückt (`RoadRuntime.tryBuildChunk`).
+
+**Bekannte Grenzen:**
+- Kein echtes Wasser / keine Flussdaten im Modul: Pfeiler stehen auf dem Terrain, auch mitten im Fluss; Vorschläge brauchen die Flüsse als Eingabe
+  (`RiverLike`) — die Anbindung an das `RiverDef` des Spiels ist ein dünner Adapter (Phase 12). Das Flussbett wird nicht freigestellt.
+- Brückenhöhe/-länge sind einfach: gerades Deck zwischen den Ufern, keine Prüfung auf Lichtraumprofil (Unterführungen), keine Steigungs-/Rampenwarnung.
+- Das Terrain unter der Brücke wird nicht verändert (kein Böschungs-Carve, Phase 10); steile Hänge neben Widerlagern bleiben steile Hänge.
+- Bogenbrücken: Parabelbogen pro Spannweite, Stützen/Zwickel nur senkrecht; auf schiefem Gelände (Spannweitenenden auf verschiedenen Höhen) werden die
+  Bogenfüsse einzeln auf das Terrain gesetzt, ohne Rücksicht auf Bogenschub. Fachwerk: Warren-Muster, Knoten pro Chunk neu aufgeteilt (Feldlänge
+  kann pro Chunk um wenige Prozent abweichen).
+- Brückenstrassen in Kurven: die Unterkonstruktion folgt der Strasse, aber Pfeilerachsen sind gerade Quader (bei engen Radien sichtbar).
+- Beleuchtung/Unterseite sind Lambert wie alles: die Deckunterseite ist dunkel. Keine Lager, Fugen, Entwässerung, Kabel/Hängebrücken (später).
+- Brücken über Strassen (Überführung): der Strassenkörper darunter ist unabhängig; Pfeiler stehen auf dem Terrain, nicht neben der Strasse.
 
 ---
 
@@ -611,7 +663,7 @@ Jede Phase endet mit etwas **Sichtbarem und Lauffähigem** in der Demo (gegen da
 | 5 | **Oberflächen & Markierungen** ✅ | Material-Registry + prozedurale Materialien (austauschbar), Verschleiß-Layer, Markierungen, alle Basis-Presets (Wanderweg → Autobahn) |
 | 6 | **Props** ✅ | Scatter-System, Leitplanken (+Auto-Regel), Laternen, Schilder (SSV), Vortrittsschilder automatisch |
 | 7 | **Ampeln** ✅ | Signalgruppen, automatischer Phasenplan, Fußgängerstreifen, Haltelinien |
-| 8 | **Brücken** | Balken/Bogen/Viadukt, Pfeiler bis Terrain, Widerlager, Geländer, Flusskreuzungs-Vorschlag |
+| 8 | **Brücken** ✅ | Balken/Bogen/Viadukt, Pfeiler bis Terrain, Widerlager, Geländer, Flusskreuzungs-Vorschlag |
 | 9 | **Tunnel** | Röhre, Portal-Fassade, Portal-Graben (Carve), Überdeckungs-Validierung, Beleuchtung, Galerien |
 | 10 | **Terrain-Modifier** | `TerrainModifier`-Interface, `RoadTerrainModifier` (Absenken + Anheben), Patch-Vorschlag für `StreamTerrain`, Böschungs-Skirts |
 | 11 | **Erweiterte Topologie** | Kreisel, Auf-/Abfahrten, Autobahnkreuz-Bausteine, Unterführungen |

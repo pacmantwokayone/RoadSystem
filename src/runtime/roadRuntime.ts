@@ -15,7 +15,8 @@ import { dependencyRadius, designHeightAt, windowRange } from '../core/alignment
 import { makeFrame, type Frame } from '../core/frames';
 import { sampleRoad, DEFAULT_SAMPLE_OPTIONS, NO_TRIM, type RoadSample, type SampledRoad, type SampleOptions, type Trim } from '../core/sampling';
 import { flipZ } from '../core/world';
-import { profileHeightAt, type ProfileData } from '../profile/types';
+import { profileHeightAt, profileHeightInside, type ProfilePoint, type ProfileData } from '../profile/types';
+import { DEFAULT_BRIDGE, type BridgeData } from '../structures/types';
 import type { End } from '../network/graph';
 
 export interface RoadRuntimeOptions {
@@ -87,6 +88,8 @@ export class RoadRuntime {
     profile: ProfileData,
     readonly opts: RoadRuntimeOptions = DEFAULT_RUNTIME_OPTIONS,
     readonly trim: Trim = NO_TRIM,
+    /** what the road's bridge sections look like (deck thickness, piers, railings …) */
+    readonly bridge: BridgeData = DEFAULT_BRIDGE,
   ) {
     this.def = def;
     this.profile = profile;
@@ -175,8 +178,22 @@ export class RoadRuntime {
     return c;
   }
 
+  /** Bridge samples read the terrain too (piers stand on it), although their height never follows it. */
   private needsGround(j: number): boolean {
-    return this.fixedW[j] < 1;
+    return this.fixedW[j] < 1 || this.samples[j].mode === 'bridge';
+  }
+
+  private bridgeProfile: ProfilePoint[] | null = null;
+
+  /** The profile's points as they are on a bridge: everything beyond the carriageway (verges, ditches) collapses onto
+   * the carriageway's edge — same number of points, so a chunk can mix road and bridge rings. */
+  bridgePoints(): ProfilePoint[] {
+    if (!this.bridgeProfile) {
+      const c = this.profile.coreHalfWidth;
+      const yl = profileHeightInside(this.profile, -c), yr = profileHeightInside(this.profile, c);
+      this.bridgeProfile = this.profile.points.map((p) => (Math.abs(p.x) <= c + 1e-9 ? p : { x: Math.sign(p.x) * c + 0, y: p.x < 0 ? yl : yr }));
+    }
+    return this.bridgeProfile;
   }
 
   /** Lateral offset (m) of probe `k` at sample j. */
@@ -257,7 +274,11 @@ export class RoadRuntime {
     const inp = { s: this.sArr, ground: this.ground, authored: this.authored, fixedWeight: this.fixedW };
     const [h0, h1] = this.heightRange(chunk);
     for (let i = h0; i <= h1; i++) {
-      this.designY[i] = designHeightAt(inp, i, this.smoothRadiusM, { dilate: true }) + this.opts.clearanceM * (1 - this.fixedW[i]);
+      const y = designHeightAt(inp, i, this.smoothRadiusM, { dilate: true }) + this.opts.clearanceM * (1 - this.fixedW[i]);
+      // the approach ramp towards a fixed point (a bridge end, say) blends terrain-following with the authored height and
+      // could dip below the terrain: a road is never buried — only fully fixed samples keep exactly their authored height
+      const buried = this.fixedW[i] < 1 && Number.isFinite(this.ground[i]) ? this.ground[i] + this.opts.clearanceM : -Infinity;
+      this.designY[i] = Math.max(y, buried);
     }
     chunk.state = 'ready';
     return true;

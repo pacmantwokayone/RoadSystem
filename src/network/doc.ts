@@ -40,13 +40,19 @@ export function sanitizeRoad(raw: unknown, fallbackId: string): RoadDef | null {
   };
   if (typeof raw.startNode === 'string' && raw.startNode) road.startNode = raw.startNode;
   if (typeof raw.endNode === 'string' && raw.endNode) road.endNode = raw.endNode;
-  if (isObj(raw.params)) {
-    const params: Record<string, number | boolean | string> = {};
-    for (const [k, v] of Object.entries(raw.params)) {
-      if (typeof v === 'boolean' || typeof v === 'string' || (typeof v === 'number' && Number.isFinite(v))) params[k] = v;
+  const cleanParams = (v: unknown): Record<string, number | boolean | string> | undefined => {
+    if (!isObj(v)) return undefined;
+    const out: Record<string, number | boolean | string> = {};
+    for (const [k, x] of Object.entries(v)) {
+      if (typeof x === 'boolean' || typeof x === 'string' || (typeof x === 'number' && Number.isFinite(x))) out[k] = x;
     }
-    if (Object.keys(params).length) road.params = params;
-  }
+    return Object.keys(out).length ? out : undefined;
+  };
+  const params = cleanParams(raw.params);
+  if (params) road.params = params;
+  if (typeof raw.bridge === 'string' && raw.bridge) road.bridge = raw.bridge;
+  const bp = cleanParams(raw.bridgeParams);
+  if (bp) road.bridgeParams = bp;
   return road;
 }
 
@@ -98,6 +104,8 @@ export function cloneRoad(r: RoadDef): RoadDef {
     name: r.name,
     profile: r.profile,
     ...(r.params ? { params: { ...r.params } } : {}),
+    ...(r.bridge ? { bridge: r.bridge } : {}),
+    ...(r.bridgeParams ? { bridgeParams: { ...r.bridgeParams } } : {}),
     ...(r.startNode ? { startNode: r.startNode } : {}),
     ...(r.endNode ? { endNode: r.endNode } : {}),
     points: r.points.map((p) => ({ ...p })),

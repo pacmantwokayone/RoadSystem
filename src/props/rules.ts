@@ -101,7 +101,7 @@ export const SCATTER_DEFAULTS: Omit<ScatterRule, 'kind' | 'asset'> = {
 
 export const GUARDRAIL_DEFAULTS: Omit<GuardrailRule, 'kind' | 'side'> = {
   variant: 'steel', offset: 0.35, postSpacing: 0, minDrop: 1.8, minDropBend: 0.9, bendRadius: 180,
-  minRun: 8, mergeGap: 14, pad: 8, terminal: 3.5, modes: ['road', 'bridge'],
+  minRun: 8, mergeGap: 14, pad: 8, terminal: 3.5, modes: ['road'],
 };
 
 export function makeScatter(asset: string, o: ScatterOpts = {}): ScatterRule {

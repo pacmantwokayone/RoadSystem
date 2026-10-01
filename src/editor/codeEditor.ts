@@ -30,6 +30,20 @@ const METHODS: Completion[] = [
   { label: 'lerp', type: 'function', detail: '(a, b, t)' },
 ];
 
+const BRIDGE_METHODS: Completion[] = [
+  { label: 'bridge', type: 'function', detail: 'B.bridge(name)', info: 'Start a bridge builder' },
+  { label: 'deck', type: 'method', detail: '({ thickness, material })', info: 'The slab under the road surface' },
+  { label: 'girders', type: 'method', detail: '({ count, depth, width, spread, material })', info: 'Longitudinal beams under the deck' },
+  { label: 'piers', type: 'method', detail: "({ maxSpan, shape: 'column'|'wall'|'twin'|'hammer', width, depth, taper, cap, minHeight, footing, round })", info: 'Supports; the section is divided into equal spans ≤ maxSpan, piers grow down to the terrain' },
+  { label: 'abutments', type: 'method', detail: '({ depth, wing, material })', info: 'End supports + retaining wing walls' },
+  { label: 'railing', type: 'method', detail: "('steel' | 'parapet' | 'timber' | 'none')", info: 'Railing along both deck edges' },
+  { label: 'arch', type: 'method', detail: "({ rise, ribs, ribWidth, ribDepth, spandrel: 'columns'|'solid'|'none' })", info: 'Arch ribs between the supports, rising from the ground' },
+  { label: 'truss', type: 'method', detail: '({ height, panel, chord, material })', info: 'Steel truss (Fachwerk) along both sides, above the deck' },
+  { label: 'lamps', type: 'method', detail: "({ asset, spacing, side })", info: 'Street lamps along the deck edges' },
+  { label: 'clamp', type: 'function', detail: '(v, lo, hi)' },
+  { label: 'lerp', type: 'function', detail: '(a, b, t)' },
+];
+
 const MATERIAL_METHODS: Completion[] = [
   ...['asphalt', 'gravel', 'dirt', 'grass', 'cobble', 'concrete', 'wood', 'stone', 'paint', 'flat'].map((k): Completion => ({ label: k, type: 'function', detail: '({ … })', info: `Surface kind '${k}'` })),
   { label: 'mix', type: 'function', detail: '(a, b, t)', info: 'Blend two colours' },
@@ -40,7 +54,7 @@ const MATERIAL_METHODS: Completion[] = [
 
 export interface CodeEditorOptions {
   /** which API to complete: profile code (`R`/builder) or material code (`M`) */
-  api?: 'profile' | 'material';
+  api?: 'profile' | 'material' | 'bridge';
   doc: string;
   materialNames: () => string[];
   onChange: (source: string) => void;
@@ -66,7 +80,7 @@ export function createCodeEditor(parent: HTMLElement, opts: CodeEditorOptions): 
       return { from: ctx.pos - str[2].length, options: opts.materialNames().map((label) => ({ label, type: 'constant' })), validFor: /^\w*$/ };
     }
     const dot = /\.(\w*)$/.exec(before);
-    if (dot) return { from: ctx.pos - dot[1].length, options: opts.api === 'material' ? MATERIAL_METHODS : METHODS, validFor: /^\w*$/ };
+    if (dot) return { from: ctx.pos - dot[1].length, options: opts.api === 'material' ? MATERIAL_METHODS : opts.api === 'bridge' ? BRIDGE_METHODS : METHODS, validFor: /^\w*$/ };
     return null;
   };
 

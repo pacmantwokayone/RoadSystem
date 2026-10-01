@@ -12,6 +12,8 @@ export interface LibraryDocument {
   profiles: Record<string, string>;
   /** material name → source code (optional: older documents have none) */
   materials?: Record<string, string>;
+  /** bridge type name → source code (optional) */
+  bridges?: Record<string, string>;
 }
 
 export type SaveResult =
@@ -39,6 +41,8 @@ export function sanitizeLibraryDocument(raw: unknown): LibraryDocument {
   const doc: LibraryDocument = { version: 1, profiles: strings(obj.profiles) };
   const materials = strings(obj.materials);
   if (Object.keys(materials).length) doc.materials = materials;
+  const bridges = strings(obj.bridges);
+  if (Object.keys(bridges).length) doc.bridges = bridges;
   if (typeof obj.revision === 'number' && Number.isFinite(obj.revision)) doc.revision = Math.max(0, Math.floor(obj.revision));
   return doc;
 }

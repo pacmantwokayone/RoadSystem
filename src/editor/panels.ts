@@ -39,27 +39,33 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
   const tabRoads = h('button', { class: 'on' }, 'Straßen');
   const tabProfile = h('button', {}, 'Profil (Code)');
   const tabMaterial = h('button', {}, 'Material');
+  const tabBridge = h('button', {}, 'Brücke');
   const roadsBody = h('div', { class: 'rse-body' });
   const profileBody = h('div', { class: 'rse-body profile', style: { display: 'none' } });
   const materialBody = h('div', { class: 'rse-body profile', style: { display: 'none' } });
-  type Tab = 'roads' | 'profile' | 'material';
+  const bridgeBody = h('div', { class: 'rse-body profile', style: { display: 'none' } });
+  type Tab = 'roads' | 'profile' | 'material' | 'bridge';
   let activeTab: Tab = 'roads';
   const showTab = (t: Tab): void => {
     activeTab = t;
     tabRoads.classList.toggle('on', t === 'roads');
     tabProfile.classList.toggle('on', t === 'profile');
     tabMaterial.classList.toggle('on', t === 'material');
+    tabBridge.classList.toggle('on', t === 'bridge');
     roadsBody.style.display = t === 'roads' ? '' : 'none';
     profileBody.style.display = t === 'profile' ? '' : 'none';
     materialBody.style.display = t === 'material' ? '' : 'none';
+    bridgeBody.style.display = t === 'bridge' ? '' : 'none';
     if (t === 'profile') { followSelection(); requestAnimationFrame(redrawPreview); } // preview needs layout, the editor doesn't
     if (t === 'material') renderMaterial(true);
+    if (t === 'bridge') renderBridge(true);
   };
   tabRoads.onclick = () => showTab('roads');
   tabProfile.onclick = () => showTab('profile');
   tabMaterial.onclick = () => showTab('material');
+  tabBridge.onclick = () => showTab('bridge');
 
-  const dock = h('div', { class: 'rse' }, bar, h('div', { class: 'rse-tabs' }, tabRoads, tabProfile, ...(editor.materialLibrary ? [tabMaterial] : [])), roadsBody, profileBody, materialBody);
+  const dock = h('div', { class: 'rse' }, bar, h('div', { class: 'rse-tabs' }, tabRoads, tabProfile, ...(editor.materialLibrary ? [tabMaterial] : []), ...(editor.bridgeLibrary ? [tabBridge] : [])), roadsBody, profileBody, materialBody, bridgeBody);
   root.append(dock);
 
   // ================= roads tab =================
@@ -101,17 +107,18 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
     return row(label, sel);
   }
 
-  function paramRow(key: string, def: ParamDef): HTMLElement {
-    const road = (): Record<string, number | boolean | string> => editor.selectedRoad?.params ?? {};
+  function paramRow(key: string, def: ParamDef, scope: 'profile' | 'bridge' = 'profile'): HTMLElement {
+    const road = (): Record<string, number | boolean | string> => (scope === 'bridge' ? editor.selectedRoad?.bridgeParams : editor.selectedRoad?.params) ?? {};
     const cur = (): number | boolean | string => road()[key] ?? def.default;
+    const setValue = (v: number | boolean | string): void => (scope === 'bridge' ? editor.setBridgeParam(key, v) : editor.setParam(key, v));
     const label = def.label ?? key;
     if (def.type === 'bool') {
-      const cb = h('input', { type: 'checkbox', checked: Boolean(cur()), on: { change: () => editor.setParam(key, cb.checked) } }) as HTMLInputElement;
+      const cb = h('input', { type: 'checkbox', checked: Boolean(cur()), on: { change: () => setValue(cb.checked) } }) as HTMLInputElement;
       controls.push({ sync: () => { cb.checked = Boolean(cur()); } });
       return row(label, cb);
     }
-    if (def.type === 'enum') return selectRow(label, (def.options ?? []).map((o) => [o, o] as [string, string]), () => String(cur()), (v) => editor.setParam(key, v));
-    return numberRow(label, () => Number(cur()), (v) => editor.setParam(key, v), { min: def.min, max: def.max, step: def.step ?? (def.type === 'int' ? 1 : 'any' as unknown as number), slider: def.min !== undefined && def.max !== undefined });
+    if (def.type === 'enum') return selectRow(label, (def.options ?? []).map((o) => [o, o] as [string, string]), () => String(cur()), (v) => setValue(v));
+    return numberRow(label, () => Number(cur()), (v) => setValue(v), { min: def.min, max: def.max, step: def.step ?? (def.type === 'int' ? 1 : 'any' as unknown as number), slider: def.min !== undefined && def.max !== undefined });
   }
 
   function pointSection(road: NonNullable<typeof editor.selectedRoad>, idx: number): HTMLElement {
@@ -164,7 +171,7 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
     const node = editor.selectedNode;
     const ik = node
       ? `node|${node.id}|${node.control ?? ''}|${editor.nodeArms(node.id).map((a) => a.roadId + a.end).join(',')}`
-      : road ? `${road.id}|${road.profile}|${editor.state.pointIndex}|${road.points.length}|${library.names().join(',')}` : 'none';
+      : road ? `${road.id}|${road.profile}|${editor.state.pointIndex}|${road.points.length}|${library.names().join(',')}|${road.bridge ?? ''}|${road.points.some((p) => p.mode === 'bridge')}|${editor.bridgeLibrary?.names().join(',') ?? ''}` : 'none';
     if (ik !== inspKey) {
       inspKey = ik;
       controls = [];
@@ -199,6 +206,16 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
         );
         const schema = library.getSchema(road.profile);
         for (const [k, def] of Object.entries(schema)) inspector.append(paramRow(k, def));
+        const bl = editor.bridgeLibrary;
+        if (bl && road.points.some((p) => p.mode === 'bridge')) {
+          const auto = editor.effectiveBridgeName({ ...road, bridge: undefined });
+          inspector.append(
+            h('div', { class: 'rse-h' }, 'Brücke'),
+            selectRow('Typ', [['', `automatisch (${auto})`], ...bl.names().map((n) => [n, n] as [string, string])], () => editor.selectedRoad?.bridge ?? '', (v) => editor.setRoadBridge(v === '' ? undefined : v)),
+          );
+          for (const [k, def] of Object.entries(bl.getSchema(editor.effectiveBridgeName(road)))) inspector.append(paramRow(k, def, 'bridge'));
+          inspector.append(h('div', { class: 'rse-hint' }, 'Brücke = Punkte mit Typ „Brücke“; Anfang und Ende stehen genau auf diesen Punkten. Bauwerk-Code im Tab „Brücke“.'));
+        }
         inspector.append(info, h('div', { class: 'rse-actions' }, h('button', { class: 'danger', on: { click: () => { if (confirm(`Straße „${road.name}“ löschen?`)) editor.deleteSelectedRoad(); } } }, 'Straße löschen')));
         if (editor.state.pointIndex !== undefined && editor.state.pointIndex < road.points.length) inspector.append(pointSection(road, editor.state.pointIndex));
         else inspector.append(h('div', { class: 'rse-hint', style: 'margin-top:8px' }, 'Punkt-Handle anklicken, um Typ, Höhe, Breite und Querneigung zu bearbeiten.'));
@@ -352,6 +369,71 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
     }
   }
 
+  // ================= bridge tab =================
+  const bridgeLib = editor.bridgeLibrary;
+  let bridgeName = 'balkenbruecke';
+  const brSel = h('select', { on: { change: () => { bridgeName = brSel.value; renderBridge(true); } } });
+  const brInfo = h('div', { class: 'rse-swatch' });
+  const brErr = h('div', { class: 'rse-err' });
+  const brCodeHost = h('div', { class: 'rse-code' });
+  let brCode: CodeEditorHandle | null = null;
+  const brActions = h('div', { class: 'rse-actions', style: 'margin:0' },
+    h('button', { title: 'Kopie unter neuem Namen anlegen', on: { click: () => {
+      const n = prompt('Name der neuen Brücke:', `${bridgeName}_2`);
+      if (!n) return;
+      const r = editor.duplicateBridge(bridgeName, n.trim());
+      if (!r.ok) { brErr.textContent = r.error ?? ''; return; }
+      bridgeName = n.trim(); renderBridge(true);
+    } } }, 'Kopie …'),
+    h('button', { title: 'Standard-Code wiederherstellen', on: { click: () => { if (editor.resetBridgeToPreset(bridgeName)) renderBridge(true); } } }, 'Standard zurücksetzen'),
+  );
+  const proposalsEl = h('div');
+  bridgeBody.append(
+    h('div', { class: 'rse-row two', style: 'margin:0' }, h('span', {}, 'Brückentyp'), brSel),
+    brInfo, brActions, brCodeHost, brErr,
+    h('div', { class: 'rse-hint' }, 'Eine Brücke ist ein Abschnitt einer Straße (Punkte mit Typ „Brücke“). Pfeiler wachsen bis zum Terrain, Spannweiten teilen den Abschnitt gleichmässig.'),
+    proposalsEl,
+  );
+
+  function renderProposals(): void {
+    proposalsEl.replaceChildren();
+    if (!editor.hasRivers) return;
+    const list = editor.bridgeProposals();
+    proposalsEl.append(h('div', { class: 'rse-h' }, `Flusskreuzungen (${list.length})`));
+    if (!list.length) proposalsEl.append(h('div', { class: 'rse-hint' }, 'Keine Straße kreuzt einen Fluss ohne Brücke.'));
+    for (const p of list) {
+      const road = editor.model.get(p.roadId);
+      proposalsEl.append(h('div', { class: 'rse-item', on: { click: () => editor.selectRoad(p.roadId) } },
+        h('span', {}, `${road?.name ?? p.roadId} × ${p.riverName ?? p.riverId}`), h('small', {}, `${(p.s1 - p.s0).toFixed(0)} m`),
+        h('button', { on: { click: (e: Event) => { e.stopPropagation(); editor.applyBridgeProposal(p); renderProposals(); } } }, 'Brücke setzen')));
+    }
+  }
+
+  function renderBridge(force = false): void {
+    if (!bridgeLib || activeTab !== 'bridge') return;
+    const names = bridgeLib.names();
+    if (force || brSel.options.length !== names.length) brSel.replaceChildren(...names.map((n) => h('option', { value: n }, n)));
+    if (!names.includes(bridgeName)) bridgeName = names[0];
+    brSel.value = bridgeName;
+    const b = bridgeLib.resolve(bridgeName);
+    const parts = [`Deck ${b.deck.thickness} m`, b.girders && `${b.girders.count} Träger`, b.piers && `Pfeiler ≤ ${b.piers.maxSpan} m (${b.piers.shape})`, b.arch && 'Bogen', b.truss && 'Fachwerk', `Geländer: ${b.railing.type}`].filter(Boolean);
+    brInfo.textContent = parts.join(' · ');
+    const src = bridgeLib.getSource(bridgeName) ?? '';
+    if (!brCode) {
+      brCode = createCodeEditor(brCodeHost, {
+        api: 'bridge', doc: src, materialNames: () => materials.names(),
+        onChange: (s) => {
+          const r = editor.applyBridgeSource(bridgeName, s);
+          brErr.textContent = r.ok ? '' : r.error ?? '';
+        },
+      });
+    } else if (force || (!brCode.focused() && src !== brCode.getValue() && !brErr.textContent)) {
+      brCode.setValue(src);
+      if (force) brErr.textContent = '';
+    }
+    if (force) renderProposals();
+  }
+
   // ================= glue =================
   function renderBar(): void {
     bSelect.classList.toggle('on', editor.state.tool === 'select');
@@ -370,6 +452,7 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
     renderRoads();
     if (activeTab === 'profile') followSelection();
     if (activeTab === 'material') renderMaterial();
+    if (activeTab === 'bridge') renderBridge();
   };
   const off = editor.onState(render);
   const offLib = library.onChange(() => { if (activeTab === 'profile') renderProfile(); });
@@ -379,6 +462,7 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
     off(); offLib();
     code?.destroy();
     matCode?.destroy();
+    brCode?.destroy();
     dock.remove();
   };
 }

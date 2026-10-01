@@ -111,9 +111,14 @@ export function sampleRoad(def: RoadDef, opts: SampleOptions = DEFAULT_SAMPLE_OP
     const tangent = curve.tangentAt(sv);
     const modeA = a.mode ?? 'road';
     const modeB = b.mode ?? 'road';
-    // a section is bridge/tunnel only between two points of that mode; transitions
-    // inside a segment snap to the nearer end
-    const mode: RoadMode = modeA === modeB ? modeA : t < 0.5 ? modeA : modeB;
+    // a bridge/tunnel section runs exactly from its first point to its last (the abutments / portals stand ON those
+    // points); a segment between a road point and a structure point is road; two different structure modes snap to the nearer end
+    const mode: RoadMode =
+      modeA === modeB ? modeA
+        : t < 1e-9 ? modeA // exactly on a point: that point's own mode
+        : t > 1 - 1e-9 ? modeB
+        : modeA === 'road' || modeB === 'road' ? 'road'
+        : t < 0.5 ? modeA : modeB;
     const fa = isFixedPoint(a) ? 1 : 0;
     const fb = isFixedPoint(b) ? 1 : 0;
     return {
