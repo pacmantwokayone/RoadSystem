@@ -456,6 +456,89 @@ __profile = (p, R) => {
 
 ;return { params: typeof params !== 'undefined' ? params : {}, build: __profile };
 },
+  "R\n\"use strict\"; let __profile;\n\n// Gleis: Einspurstrecke mit Schotterbett, Schwellen, Schienen, Fahrleitung und Signalen\nconst params = {\n  catenary:      { type: 'bool',  label: 'Fahrleitung', default: true },\n  signals:       { type: 'bool',  label: 'Signale', default: true },\n  signalSpacing: { type: 'float', label: 'Signalabstand', min: 100, max: 2000, step: 50, default: 450 },\n};\n__profile = (p, R) => {\n  const prof = R.profile('Gleis').rank(5)\n    .thickness(0.9).bodyMaterial('subgrade').smooth(140)\n    .rail({ tracks: [0] })\n    .center(4.0, 'ballast', { kind: 'ballast' })\n    .both(h => h\n      .surface(0.8, 'gravel_fine', { kind: 'walkway', slope: -0.01 })\n      .slope(0.9, -0.55, 'ballast', { kind: 'embankment' })\n      .slope(1.0, -0.05, 'gravel', { kind: 'verge' })\n      .ditch(1.8, 0.45, 'grass'));\n  if (p.catenary) prof.catenary({ height: 5.5, spacing: 56 });\n  if (p.signals) prof.signals({ spacing: p.signalSpacing, start: 60 });\n  return prof;\n};\n\n;return { params: typeof params !== 'undefined' ? params : {}, build: __profile };": function (R) {
+"use strict"; let __profile;
+
+// Gleis: Einspurstrecke mit Schotterbett, Schwellen, Schienen, Fahrleitung und Signalen
+const params = {
+  catenary:      { type: 'bool',  label: 'Fahrleitung', default: true },
+  signals:       { type: 'bool',  label: 'Signale', default: true },
+  signalSpacing: { type: 'float', label: 'Signalabstand', min: 100, max: 2000, step: 50, default: 450 },
+};
+__profile = (p, R) => {
+  const prof = R.profile('Gleis').rank(5)
+    .thickness(0.9).bodyMaterial('subgrade').smooth(140)
+    .rail({ tracks: [0] })
+    .center(4.0, 'ballast', { kind: 'ballast' })
+    .both(h => h
+      .surface(0.8, 'gravel_fine', { kind: 'walkway', slope: -0.01 })
+      .slope(0.9, -0.55, 'ballast', { kind: 'embankment' })
+      .slope(1.0, -0.05, 'gravel', { kind: 'verge' })
+      .ditch(1.8, 0.45, 'grass'));
+  if (p.catenary) prof.catenary({ height: 5.5, spacing: 56 });
+  if (p.signals) prof.signals({ spacing: p.signalSpacing, start: 60 });
+  return prof;
+};
+
+;return { params: typeof params !== 'undefined' ? params : {}, build: __profile };
+},
+  "R\n\"use strict\"; let __profile;\n\n// Doppelspur: zwei Gleise (Rechtsverkehr), gemeinsames Schotterbett, Masten aussen\nconst params = {\n  catenary:      { type: 'bool',  label: 'Fahrleitung', default: true },\n  signals:       { type: 'bool',  label: 'Signale', default: true },\n  signalSpacing: { type: 'float', label: 'Signalabstand', min: 100, max: 2000, step: 50, default: 450 },\n};\n__profile = (p, R) => {\n  const prof = R.profile('Doppelspur').rank(6)\n    .thickness(0.9).bodyMaterial('subgrade').smooth(160)\n    .rail({ tracks: [-2.25, 2.25] })\n    .center(8.4, 'ballast', { kind: 'ballast' })\n    .both(h => h\n      .surface(0.8, 'gravel_fine', { kind: 'walkway', slope: -0.01 })\n      .slope(0.9, -0.55, 'ballast', { kind: 'embankment' })\n      .slope(1.0, -0.05, 'gravel', { kind: 'verge' })\n      .ditch(1.8, 0.45, 'grass'));\n  if (p.catenary) prof.catenary({ height: 5.5, spacing: 56 });\n  if (p.signals) prof.signals({ spacing: p.signalSpacing, start: 60 });\n  return prof;\n};\n\n;return { params: typeof params !== 'undefined' ? params : {}, build: __profile };": function (R) {
+"use strict"; let __profile;
+
+// Doppelspur: zwei Gleise (Rechtsverkehr), gemeinsames Schotterbett, Masten aussen
+const params = {
+  catenary:      { type: 'bool',  label: 'Fahrleitung', default: true },
+  signals:       { type: 'bool',  label: 'Signale', default: true },
+  signalSpacing: { type: 'float', label: 'Signalabstand', min: 100, max: 2000, step: 50, default: 450 },
+};
+__profile = (p, R) => {
+  const prof = R.profile('Doppelspur').rank(6)
+    .thickness(0.9).bodyMaterial('subgrade').smooth(160)
+    .rail({ tracks: [-2.25, 2.25] })
+    .center(8.4, 'ballast', { kind: 'ballast' })
+    .both(h => h
+      .surface(0.8, 'gravel_fine', { kind: 'walkway', slope: -0.01 })
+      .slope(0.9, -0.55, 'ballast', { kind: 'embankment' })
+      .slope(1.0, -0.05, 'gravel', { kind: 'verge' })
+      .ditch(1.8, 0.45, 'grass'));
+  if (p.catenary) prof.catenary({ height: 5.5, spacing: 56 });
+  if (p.signals) prof.signals({ spacing: p.signalSpacing, start: 60 });
+  return prof;
+};
+
+;return { params: typeof params !== 'undefined' ? params : {}, build: __profile };
+},
+  "R\n\"use strict\"; let __profile;\n\n// Bahnhof: Doppelspur mit zwei Aussenbahnsteigen (55 cm über Schienenoberkante), Dächern, Bänken und Leuchten\nconst params = {\n  canopy:   { type: 'bool',  label: 'Perrondächer', default: true },\n  width:    { type: 'float', label: 'Perronbreite', min: 2.5, max: 6, step: 0.25, default: 4.0 },\n  catenary: { type: 'bool',  label: 'Fahrleitung', default: true },\n};\n__profile = (p, R) => {\n  const prof = R.profile('Bahnhof').rank(6)\n    .thickness(1.0).bodyMaterial('subgrade').smooth(200)\n    .rail({ tracks: [-2.25, 2.25] })\n    .center(7.9, 'ballast', { kind: 'ballast' })\n    .both(h => h\n      .step(0.55, 'curb', { kind: 'platform' })\n      .surface(p.width, 'sidewalk', { kind: 'platform' })\n      .slope(0.8, -0.3, 'grass', { kind: 'verge' })\n      .slope(1.4, -0.2, 'grass', { kind: 'verge' }))\n    .mark(-4.45, { color: 'yellow', width: 0.14 })\n    .mark(4.45, { color: 'yellow', width: 0.14 });\n  const mid = -p.width / 2;\n  if (p.canopy) prof.scatter('platform_canopy', { spacing: 14, offset: mid, side: 'both', face: 'road', start: 7 });\n  prof.scatter('bench', { spacing: 28, offset: mid + 0.9, side: 'both', face: 'road', start: 14 });\n  prof.lamps({ asset: 'lamp_small', spacing: 21, offset: mid - 0.2, side: 'both', start: 3.5 });\n  if (p.catenary) prof.catenary({ height: 5.5, spacing: 56 });\n  return prof;\n};\n\n;return { params: typeof params !== 'undefined' ? params : {}, build: __profile };": function (R) {
+"use strict"; let __profile;
+
+// Bahnhof: Doppelspur mit zwei Aussenbahnsteigen (55 cm über Schienenoberkante), Dächern, Bänken und Leuchten
+const params = {
+  canopy:   { type: 'bool',  label: 'Perrondächer', default: true },
+  width:    { type: 'float', label: 'Perronbreite', min: 2.5, max: 6, step: 0.25, default: 4.0 },
+  catenary: { type: 'bool',  label: 'Fahrleitung', default: true },
+};
+__profile = (p, R) => {
+  const prof = R.profile('Bahnhof').rank(6)
+    .thickness(1.0).bodyMaterial('subgrade').smooth(200)
+    .rail({ tracks: [-2.25, 2.25] })
+    .center(7.9, 'ballast', { kind: 'ballast' })
+    .both(h => h
+      .step(0.55, 'curb', { kind: 'platform' })
+      .surface(p.width, 'sidewalk', { kind: 'platform' })
+      .slope(0.8, -0.3, 'grass', { kind: 'verge' })
+      .slope(1.4, -0.2, 'grass', { kind: 'verge' }))
+    .mark(-4.45, { color: 'yellow', width: 0.14 })
+    .mark(4.45, { color: 'yellow', width: 0.14 });
+  const mid = -p.width / 2;
+  if (p.canopy) prof.scatter('platform_canopy', { spacing: 14, offset: mid, side: 'both', face: 'road', start: 7 });
+  prof.scatter('bench', { spacing: 28, offset: mid + 0.9, side: 'both', face: 'road', start: 14 });
+  prof.lamps({ asset: 'lamp_small', spacing: 21, offset: mid - 0.2, side: 'both', start: 3.5 });
+  if (p.catenary) prof.catenary({ height: 5.5, spacing: 56 });
+  return prof;
+};
+
+;return { params: typeof params !== 'undefined' ? params : {}, build: __profile };
+},
   "M\n\"use strict\"; let __material;\n// asphalt: see M.asphalt(…) options — color, color2, tileM, noise, tracks, cracks, patches, edgeDirt, wornPaint\n__material = (M) => M.asphalt({\n  color: 0x4d4f54,\n  tileM: 2.5,\n  noise: 0.5,\n  tracks: 0.8,\n  cracks: 0.5,\n  patches: 0.5,\n  edgeDirt: 0.4,\n});\n\n;return __material;": function (M) {
 "use strict"; let __material;
 // asphalt: see M.asphalt(…) options — color, color2, tileM, noise, tracks, cracks, patches, edgeDirt, wornPaint
@@ -573,6 +656,20 @@ __material = (M) => M.gravel({
   noise: 0.8,
   tracks: 0.6,
   edgeDirt: 0.5,
+});
+
+;return __material;
+},
+  "M\n\"use strict\"; let __material;\n// gravel: see M.gravel(…) options — color, color2, tileM, noise, tracks, cracks, patches, edgeDirt, wornPaint\n__material = (M) => M.gravel({\n  color: 0x86837e,\n  color2: 0x5f5d59,\n  tileM: 0.45,\n  noise: 0.95,\n  tracks: 0,\n  edgeDirt: 0.15,\n});\n\n;return __material;": function (M) {
+"use strict"; let __material;
+// gravel: see M.gravel(…) options — color, color2, tileM, noise, tracks, cracks, patches, edgeDirt, wornPaint
+__material = (M) => M.gravel({
+  color: 0x86837e,
+  color2: 0x5f5d59,
+  tileM: 0.45,
+  noise: 0.95,
+  tracks: 0,
+  edgeDirt: 0.15,
 });
 
 ;return __material;
@@ -810,6 +907,22 @@ __bridge = (p, B) => B.bridge('Fachwerkbrücke')
   .piers({ maxSpan: p.maxSpan, shape: 'column', width: 1.6, depth: 2.2, taper: 0.2, round: false, footing: 0.6, minHeight: 3 })
   .abutments({ depth: 3, wing: 6 })
   .railing('none');
+
+;return { params: typeof params !== 'undefined' ? params : {}, build: __bridge };
+},
+  "B\n\"use strict\"; let __bridge;\n\n// Eisenbahnbrücke: Betontrog auf Pfeilerjochen (Schotterbett bleibt, Fahrleitungsmasten stehen auf dem Rand)\nconst params = {\n  maxSpan: { type: 'float', label: 'Max. Spannweite', min: 15, max: 70, step: 1, default: 36 },\n  box:     { type: 'float', label: 'Trägerhöhe', min: 0.8, max: 3, step: 0.1, default: 1.5 },\n};\n__bridge = (p, B) => B.bridge('Eisenbahnbrücke')\n  .deck({ thickness: p.box, material: 'concrete' })\n  .piers({ maxSpan: p.maxSpan, shape: 'wall', width: 3.2, depth: 1.6, taper: 0.25, cap: true, capHeight: 0.9, footing: 0.7, minHeight: 3 })\n  .abutments({ depth: 3, wing: 8 })\n  .railing('steel');\n\n;return { params: typeof params !== 'undefined' ? params : {}, build: __bridge };": function (B) {
+"use strict"; let __bridge;
+
+// Eisenbahnbrücke: Betontrog auf Pfeilerjochen (Schotterbett bleibt, Fahrleitungsmasten stehen auf dem Rand)
+const params = {
+  maxSpan: { type: 'float', label: 'Max. Spannweite', min: 15, max: 70, step: 1, default: 36 },
+  box:     { type: 'float', label: 'Trägerhöhe', min: 0.8, max: 3, step: 0.1, default: 1.5 },
+};
+__bridge = (p, B) => B.bridge('Eisenbahnbrücke')
+  .deck({ thickness: p.box, material: 'concrete' })
+  .piers({ maxSpan: p.maxSpan, shape: 'wall', width: 3.2, depth: 1.6, taper: 0.25, cap: true, capHeight: 0.9, footing: 0.7, minHeight: 3 })
+  .abutments({ depth: 3, wing: 8 })
+  .railing('steel');
 
 ;return { params: typeof params !== 'undefined' ? params : {}, build: __bridge };
 },

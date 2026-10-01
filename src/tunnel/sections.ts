@@ -43,5 +43,7 @@ export interface TunnelDims {
 }
 
 export function tunnelDims(rt: RoadRuntime): TunnelDims {
+  // a railway tube is taller: the overhead line hangs under the crown
+  if (rt.profile.rail) return { halfW: Math.max(3.6, rt.profile.carriageHalfWidth + 0.5), wall: 4.0, rise: 2.9 };
   return { halfW: Math.max(3.4, rt.profile.carriageHalfWidth + 0.9), wall: 3.1, rise: 2.4 };
 }

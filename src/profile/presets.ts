@@ -397,6 +397,80 @@ export default (p, R) => {
 };
 `;
 
+export const GLEIS = `
+// Gleis: Einspurstrecke mit Schotterbett, Schwellen, Schienen, Fahrleitung und Signalen
+export const params = {
+  catenary:      { type: 'bool',  label: 'Fahrleitung', default: true },
+  signals:       { type: 'bool',  label: 'Signale', default: true },
+  signalSpacing: { type: 'float', label: 'Signalabstand', min: 100, max: 2000, step: 50, default: 450 },
+};
+export default (p, R) => {
+  const prof = R.profile('Gleis').rank(5)
+    .thickness(0.9).bodyMaterial('subgrade').smooth(140)
+    .rail({ tracks: [0] })
+    .center(4.0, 'ballast', { kind: 'ballast' })
+    .both(h => h
+      .surface(0.8, 'gravel_fine', { kind: 'walkway', slope: -0.01 })
+      .slope(0.9, -0.55, 'ballast', { kind: 'embankment' })
+      .slope(1.0, -0.05, 'gravel', { kind: 'verge' })
+      .ditch(1.8, 0.45, 'grass'));
+  if (p.catenary) prof.catenary({ height: 5.5, spacing: 56 });
+  if (p.signals) prof.signals({ spacing: p.signalSpacing, start: 60 });
+  return prof;
+};
+`;
+
+export const GLEIS_DOPPEL = `
+// Doppelspur: zwei Gleise (Rechtsverkehr), gemeinsames Schotterbett, Masten aussen
+export const params = {
+  catenary:      { type: 'bool',  label: 'Fahrleitung', default: true },
+  signals:       { type: 'bool',  label: 'Signale', default: true },
+  signalSpacing: { type: 'float', label: 'Signalabstand', min: 100, max: 2000, step: 50, default: 450 },
+};
+export default (p, R) => {
+  const prof = R.profile('Doppelspur').rank(6)
+    .thickness(0.9).bodyMaterial('subgrade').smooth(160)
+    .rail({ tracks: [-2.25, 2.25] })
+    .center(8.4, 'ballast', { kind: 'ballast' })
+    .both(h => h
+      .surface(0.8, 'gravel_fine', { kind: 'walkway', slope: -0.01 })
+      .slope(0.9, -0.55, 'ballast', { kind: 'embankment' })
+      .slope(1.0, -0.05, 'gravel', { kind: 'verge' })
+      .ditch(1.8, 0.45, 'grass'));
+  if (p.catenary) prof.catenary({ height: 5.5, spacing: 56 });
+  if (p.signals) prof.signals({ spacing: p.signalSpacing, start: 60 });
+  return prof;
+};
+`;
+
+export const BAHNHOF = `
+// Bahnhof: Doppelspur mit zwei Aussenbahnsteigen (55 cm über Schienenoberkante), Dächern, Bänken und Leuchten
+export const params = {
+  canopy:   { type: 'bool',  label: 'Perrondächer', default: true },
+  width:    { type: 'float', label: 'Perronbreite', min: 2.5, max: 6, step: 0.25, default: 4.0 },
+  catenary: { type: 'bool',  label: 'Fahrleitung', default: true },
+};
+export default (p, R) => {
+  const prof = R.profile('Bahnhof').rank(6)
+    .thickness(1.0).bodyMaterial('subgrade').smooth(200)
+    .rail({ tracks: [-2.25, 2.25] })
+    .center(7.9, 'ballast', { kind: 'ballast' })
+    .both(h => h
+      .step(0.55, 'curb', { kind: 'platform' })
+      .surface(p.width, 'sidewalk', { kind: 'platform' })
+      .slope(0.8, -0.3, 'grass', { kind: 'verge' })
+      .slope(1.4, -0.2, 'grass', { kind: 'verge' }))
+    .mark(-4.45, { color: 'yellow', width: 0.14 })
+    .mark(4.45, { color: 'yellow', width: 0.14 });
+  const mid = -p.width / 2;
+  if (p.canopy) prof.scatter('platform_canopy', { spacing: 14, offset: mid, side: 'both', face: 'road', start: 7 });
+  prof.scatter('bench', { spacing: 28, offset: mid + 0.9, side: 'both', face: 'road', start: 14 });
+  prof.lamps({ asset: 'lamp_small', spacing: 21, offset: mid - 0.2, side: 'both', start: 3.5 });
+  if (p.catenary) prof.catenary({ height: 5.5, spacing: 56 });
+  return prof;
+};
+`;
+
 export const PRESET_SOURCES: Record<string, string> = {
   trampelpfad: TRAMPELPFAD,
   wanderweg: WANDERWEG,
@@ -418,4 +492,7 @@ export const PRESET_SOURCES: Record<string, string> = {
   autobahn: AUTOBAHN,
   auffahrt: AUFFAHRT,
   kreisel: KREISEL,
+  gleis: GLEIS,
+  gleis_doppel: GLEIS_DOPPEL,
+  bahnhof: BAHNHOF,
 };

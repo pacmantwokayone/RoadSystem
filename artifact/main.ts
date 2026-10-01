@@ -12,6 +12,7 @@ import { RoadMeshLayer } from '../src/mesh/roadMeshLayer';
 import { PropLayer } from '../src/props/propLayer';
 import { IslandLayer } from '../src/props/islandLayer';
 import { TunnelLayer } from '../src/tunnel/tunnelLayer';
+import { RailLayer } from '../src/rail/railLayer';
 import { TunnelSystem } from '../src/tunnel/tunnelSystem';
 import { SignalLayer } from '../src/props/signalLayer';
 import { BridgeLayer } from '../src/structures/bridgeLayer';
@@ -95,6 +96,8 @@ const islandLayer = new IslandLayer(roads, terrain, propLayer.assets, propLayer.
 scene.add(islandLayer.group);
 const tunnelLayer = new TunnelLayer(roads, propLayer.materials);
 scene.add(tunnelLayer.group);
+const railLayer = new RailLayer(roads, propLayer.materials, { drawDistance: 1100 });
+scene.add(railLayer.group);
 const tunnelSystem = new TunnelSystem(roads, terrain);
 const bridgeLayer = new BridgeLayer(roads, materials, { drawDistance: 1800 });
 scene.add(bridgeLayer.group);
@@ -315,6 +318,7 @@ renderer.setAnimationLoop(() => {
   islandLayer.update();
   tunnelSystem.update();
   tunnelLayer.update(camera);
+  railLayer.update(camera);
   bridgeLayer.update(camera);
   signalLayer.update(performance.now() / 1000, camera);
   renderer.render(scene, camera);

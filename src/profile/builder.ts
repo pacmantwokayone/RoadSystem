@@ -10,7 +10,7 @@
 //       .ditch(1.4, 0.35, 'grass'))
 
 import { makeGuardrail, makeScatter, type GuardrailOpts, type PropRule, type PropSide, type ScatterOpts } from '../props/rules';
-import { ROADWAY_KINDS, type MarkingDef, type ProfileData, ProfilePoint, ProfileSegment, VaryContext, VaryResult } from './types';
+import { ROADWAY_KINDS, type MarkingDef, type ProfileData, ProfilePoint, ProfileSegment, type RailSpec, VaryContext, VaryResult } from './types';
 
 export interface SurfaceOpts {
   /** rise over run going OUTWARD (negative = falls away from the centre) */
@@ -108,6 +108,7 @@ export class ProfileBuilder {
   private _marks: MarkingDef[] = [];
   private _props: PropRule[] = [];
   private _rank: number | undefined;
+  private _rail: RailSpec | undefined;
 
   constructor(readonly name: string) {}
 
@@ -181,6 +182,33 @@ export class ProfileBuilder {
     return this;
   }
 
+  /** Makes this a railway profile: one rail pair per entry of `tracks` (lateral centres, default one track on the axis). */
+  rail(o: { tracks?: number[]; gauge?: number; sleeperSpacing?: number } = {}): this {
+    const tracks = (o.tracks ?? [0]).filter((x) => Number.isFinite(x));
+    this._rail = {
+      gauge: Math.min(2, Math.max(0.6, o.gauge ?? 1.435)),
+      tracks: tracks.length ? tracks : [0],
+      sleeperSpacing: Math.min(2, Math.max(0.3, o.sleeperSpacing ?? 0.6)),
+      catenary: this._rail?.catenary ?? null,
+      signals: this._rail?.signals ?? null,
+    };
+    return this;
+  }
+
+  /** Overhead line (Fahrleitung): masts with cantilevers, messenger and contact wire. Needs `rail()`. */
+  catenary(o: { height?: number; spacing?: number } | false = {}): this {
+    if (!this._rail) this.rail();
+    this._rail!.catenary = o === false ? null : { height: Math.min(8, Math.max(4, o.height ?? 5.5)), spacing: Math.min(80, Math.max(20, o.spacing ?? 56)) };
+    return this;
+  }
+
+  /** Light signals beside the track. Needs `rail()`. */
+  signals(o: { spacing?: number; start?: number } | false = {}): this {
+    if (!this._rail) this.rail();
+    this._rail!.signals = o === false ? null : { spacing: Math.min(5000, Math.max(60, o.spacing ?? 600)), start: Math.max(0, o.start ?? 40) };
+    return this;
+  }
+
   /** Per-sample variation along the road (path wobble, width noise, …). */
   vary(fn: (ctx: VaryContext) => VaryResult): this {
     this._vary = fn;
@@ -248,6 +276,7 @@ export class ProfileBuilder {
       carriageHalfWidth: carriage > 0 ? Math.min(carriage, core || carriage) : core,
       outerHalfWidth: outer,
       vary: this._vary,
+      ...(this._rail ? { rail: this._rail } : {}),
     };
   }
 }

@@ -100,6 +100,20 @@ export const BUILTIN_ASSETS: Record<string, PropAssetDef> = {
       { geometry: box(0.06, 0.45, 0.4, 0.7, 0.22, 0), material: 'steel_dark' },
     ],
   },
+  platform_canopy: {
+    // Perrondach: Stützen auf der Gleisabgewandten Seite, geneigtes Dach das zum Gleis hin auskragt (+z = Gleis)
+    build: () => {
+      const roof = box(3.9, 0.12, 9.0, 0, 3.55, 0.35);
+      roof.rotateX(0); // flat from the front; the slight fall is in the ribs below
+      return [
+        { geometry: roof, material: 'platform_roof' },
+        ...[-3.6, 0, 3.6].flatMap((x) => [
+          { geometry: box(0.16, 3.5, 0.16, x, 0.0, -1.2), material: 'rail_mast' },
+          { geometry: box(0.1, 0.1, 3.6, x, 3.42, 0.6), material: 'rail_mast' },
+        ]),
+      ];
+    },
+  },
   tree_poplar: {
     build: () => tree(2.4, new THREE.IcosahedronGeometry(1, 1).scale(1.3, 5.2, 1.3), 7.2, false),
   },

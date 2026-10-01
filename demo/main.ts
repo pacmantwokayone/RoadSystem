@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
-  MockStreamTerrain, RoadSystem, RoadDebugLayer, RoadMeshLayer, PropLayer, SignalLayer, BridgeLayer, BridgeLibrary, IslandLayer, TunnelLayer, TunnelSystem, GeometryBatch, placementMatrix, SIGN_CATALOG, ProfileLibrary, MaterialRegistry, MaterialLibrary,
+  MockStreamTerrain, RoadSystem, RoadDebugLayer, RoadMeshLayer, PropLayer, SignalLayer, BridgeLayer, BridgeLibrary, IslandLayer, TunnelLayer, RailLayer, TunnelSystem, GeometryBatch, placementMatrix, SIGN_CATALOG, ProfileLibrary, MaterialRegistry, MaterialLibrary,
   StorageStore, MemoryStore, type RoadDef, type RoadStore,
   WaterLibrary, WaterSystem, WaterLayer, bridgePierObstacles, waterDemoHeight, waterDemoWaters, waterDemoNetwork, WATER_DEMO_VIEWS,
 } from 'roadsystem';
@@ -82,6 +82,8 @@ const islandLayer = new IslandLayer(system, terrain, propLayer.assets, propLayer
 scene.add(islandLayer.group);
 const tunnelLayer = new TunnelLayer(system, propLayer.materials);
 scene.add(tunnelLayer.group);
+const railLayer = new RailLayer(system, propLayer.materials, { drawDistance: Number(qp.get('propDist') ?? 1100) });
+scene.add(railLayer.group);
 const tunnelSystem = new TunnelSystem(system, terrain);
 const bridgeLayer = new BridgeLayer(system, materials, { drawDistance: Number(qp.get('propDist') ?? 1500) });
 scene.add(bridgeLayer.group);
@@ -293,6 +295,7 @@ renderer.setAnimationLoop(() => {
   islandLayer.update();
   tunnelSystem.update();
   tunnelLayer.update(camera);
+  railLayer.update(camera);
   bridgeLayer.update(camera);
   signalLayer.update(frozenT ?? (performance.now() / 1000) * sigSpeed, camera);
   // the "player" is the orbit target; the terrain streams around it (sim z = -three z)

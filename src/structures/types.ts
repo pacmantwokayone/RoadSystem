@@ -119,6 +119,7 @@ export const DEFAULT_BRIDGE: BridgeData = {
 
 /** The bridge type used for a road that doesn't name one: by importance of the road. */
 export function defaultBridgeName(profile: ProfileData): string {
+  if (profile.rail) return 'eisenbahnbruecke';
   if (profile.rank <= 1) return 'holzsteg';
   if (profile.rank <= 4) return 'plattenbruecke';
   if (profile.rank <= 6) return 'balkenbruecke';

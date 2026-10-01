@@ -6,6 +6,7 @@ import { autoLevelRiver } from './autolevel';
 import type { NodeDef, RoadDef, RoadPoint } from '../network/types';
 import { buildRoundabout } from '../network/roundabout';
 import { buildStackInterchange } from '../network/interchange';
+import { branchPoints } from '../network/branch';
 import type { LakeDef, RiverDef, RiverPoint } from './types';
 
 /** level ground on the plateau for the motorway interchange */
@@ -16,6 +17,9 @@ export const TRAFFIC_PAD = { x: 4380, z: 2350, flat: 700, blend: 380, y: 782 } a
 
 /** the hill between the village and the cliff foot, pierced by the Tunnelstrasse */
 export const TUNNEL_RIDGE = { x: 3800, z: 2480, amp: 60, sx: 95, sz: 230 } as const;
+
+/** the low hill the railway tunnel passes through, east of the mountain slope (the line begins inside the mountain) */
+export const RAIL_RIDGE = { x: 3930, z: 1900, amp: 40, sx: 62, sz: 150 } as const;
 
 const smooth = (a: number, b: number, v: number): number => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
 
@@ -30,8 +34,10 @@ export const WATER_DEMO = {
 
 /** terrain of the demo scene (SIM x, z → height) */
 export function waterDemoHeight(x: number, z: number): number {
-  const rg = TUNNEL_RIDGE;
-  return valleyHeight(x, z) + rg.amp * Math.exp(-((x - rg.x) ** 2) / (2 * rg.sx * rg.sx) - ((z - rg.z) ** 2) / (2 * rg.sz * rg.sz));
+  const rg = TUNNEL_RIDGE, rr = RAIL_RIDGE;
+  return valleyHeight(x, z)
+    + rg.amp * Math.exp(-((x - rg.x) ** 2) / (2 * rg.sx * rg.sx) - ((z - rg.z) ** 2) / (2 * rg.sz * rg.sz))
+    + rr.amp * Math.exp(-((x - rr.x) ** 2) / (2 * rr.sx * rr.sx) - ((z - rr.z) ** 2) / (2 * rr.sz * rr.sz));
 }
 
 /** the terrain without the tunnel ridge (what the Tunnelstrasse's height is planned against) */
@@ -119,10 +125,60 @@ export const WATER_DEMO_VIEWS: Record<string, { label: string; cam: [number, num
   tee: { label: 'Dorf-T', cam: [4210, 800, -2150, 4150, 782, -2205] },
   interchange: { label: 'Autobahnkreuz', cam: [2250, 1420, -1500, 2700, 1205, -2150] },
   interchangeLow: { label: 'Kreuz (Boden)', cam: [2780, 1212, -2290, 2700, 1205, -2150] },
+  rail: { label: 'Bahnstrecke', cam: [3800, 1100, -1350, 4400, 790, -2200] },
+  station: { label: 'Bahnhof', cam: [4120, 806, -1860, 4230, 783, -1900] },
+  switch: { label: 'Weiche', cam: [4350, 800, -1865, 4375, 783, -1898] },
+  railTunnel: { label: 'Bahntunnel West', cam: [4090, 802, -1930, 4005, 790, -1900] },
+  railTunnelSouth: { label: 'Bahntunnel Süd', cam: [4690, 812, -3290, 4640, 795, -3380] },
+  signal: { label: 'Signal', cam: [4045, 788, -1885, 4090, 784, -1898] },
+  viaduct: { label: 'Viadukt über die Strasse', cam: [4790, 800, -2400, 4640, 785, -2480] },
+  archBridge: { label: 'Bogenbrücke über den Fluss', cam: [4560, 802, -2780, 4640, 784, -3000] },
+  catenary: { label: 'Fahrleitung', cam: [4330, 787, -1925, 4400, 785, -1900] },
   tunnelEast: { label: 'Tunnelportal Ost', cam: [4075, 800, -2420, 3960, 788, -2480] },
   tunnelWest: { label: 'Tunnelportal West', cam: [3560, 850, -2520, 3640, 792, -2480] },
   confluence: { label: 'Zusammenfluss', cam: [3960, 830, -3090, 3900, 795, -3028] },
 };
+
+/**
+ * A railway through the valley (SIM): a double-track line comes out of a mountain tunnel in the west, passes a siding switch and the station
+ * 'Talbahnhof', swings south in a 240 m curve, climbs onto a stone viaduct that crosses the Hauptstrasse and the river and disappears into the
+ * hillside in a second tunnel. Everything stays above the road network: no level crossings.
+ */
+export function railDemoRoads(ground: (x: number, z: number) => number = waterDemoHeight): RoadDef[] {
+  const Y0 = 782.45; // top of the ballast on the level valley floor
+  const Z = 1900;
+  const P = (x: number, z: number, y: number, extra: Partial<RoadPoint> = {}): RoadPoint => ({ x, y, z, ...extra });
+  const T = (x: number): RoadPoint => P(x, Z, 785, { mode: 'tunnel' });
+  // west: the line begins inside the mountain and leaves the hill east of it at x ≈ 4005
+  const west: RoadPoint[] = [T(3740), T(3800), T(3860), T(3930), T(4005), P(4040, Z, Y0, { elev: 'fixed' }), P(4090, Z, Y0, { elev: 'fixed' })];
+  const roads: RoadDef[] = [{ id: 'bahn-west', name: 'Bahn West (Tunnel)', profile: 'gleis_doppel', points: west }];
+  // the station: two side platforms, canopies, benches, lamps
+  roads.push({ id: 'bahnhof', name: 'Talbahnhof', profile: 'bahnhof', points: [P(4090, Z, Y0, { elev: 'fixed' }), P(4200, Z, Y0, { elev: 'fixed' }), P(4310, Z, Y0, { elev: 'fixed' })] });
+  // east: curve to the south and up onto the viaduct, over the river, into the south tunnel
+  const R = 180, X0 = 4460, cx = X0, cz = Z + R;
+  const pts: Array<[number, number]> = [[4310, Z], [4460, Z]];
+  for (let k = 1; k <= 6; k++) { const a = (k / 6) * (Math.PI / 2); pts.push([cx + R * Math.sin(a), cz - R * Math.cos(a)]); }
+  for (let z = 2140; z <= 3320; z += 60) pts.push([4640, z]);
+  // flat to the start of the curve, then climbing 1.4 % to the deck height at z = 2440
+  const DECK = 791.5;
+  const L: number[] = [0];
+  for (let i = 1; i < pts.length; i++) L.push(L[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+  const sUp0 = L[1], sUp1 = L[pts.findIndex(([, z]) => z >= 2440)];
+  const east: RoadPoint[] = pts.map(([x, z], i) => {
+    const y = Y0 + (DECK - Y0) * Math.min(1, Math.max(0, (L[i] - sUp0) / (sUp1 - sUp0)));
+    return y - ground(x, z) > 4.5 ? P(x, z, y, { mode: 'bridge' }) : P(x, z, y, { elev: 'fixed' });
+  });
+  east.push(P(4640, 3345, DECK, { elev: 'fixed' }));
+  for (const z of [3385, 3440, 3520, 3600]) east.push(P(4640, z, DECK, { mode: 'tunnel' }));
+  roads.push({ id: 'bahn-ost', name: 'Bahn Ost (Viadukt)', profile: 'gleis_doppel', bridge: 'bogenbruecke', points: east });
+  // a siding leaves the right-hand track east of the station (a switch: the branch grows out of the main road's edge)
+  const siding = branchPoints({
+    main: { points: east }, s: 4330 - 4310, side: 1, halfMain: 2.25, halfBranch: 0, taper: 100, gap: 4.5, step: 10,
+    tail: [P(4440, Z - 6.75, Y0, { elev: 'fixed' }), P(4450, Z - 6.75, Y0, { elev: 'fixed' })],
+  }).map((p) => ({ ...p, y: p.y - 0.02, elev: 'fixed' as const }));
+  roads.push({ id: 'bahn-stich', name: 'Abstellgleis', profile: 'gleis', points: siding });
+  return roads;
+}
 
 /**
  * The road test field on the level ground south of the river: the Talstrasse comes over the bridge into a roundabout; from there a village
@@ -164,6 +220,8 @@ export function waterDemoNetwork(ground: (x: number, z: number) => number = wate
     { id: 'quartier-ost', name: 'Quartierstrasse (2)', profile: 'quartierstrasse', points: gs([[4150, 2200], [4270, 2206], [4400, 2216]]), startNode: 'tee' },
     // a motorway interchange on the plateau: one motorway on the ground, one high above it on stilts, four flyover ramps
     ...buildStackInterchange({ id: 'kreuz', x: INTERCHANGE_PAD.x, z: INTERCHANGE_PAD.z, ground, lift: 11, radius: 160, lengthA: 450, lengthB: 640, grade: 0.05 }).roads,
+    // the railway
+    ...railDemoRoads(ground),
   ];
   return { roads, nodes };
 }

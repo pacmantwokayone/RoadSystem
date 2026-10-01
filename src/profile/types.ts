@@ -56,6 +56,20 @@ export interface VaryResult {
   offsetX?: number;
 }
 
+/** Railway equipment of a profile: the track layout and what stands along it (drawn by the RailLayer, not part of the surface). */
+export interface RailSpec {
+  /** distance between the rail centres, metres */
+  gauge: number;
+  /** lateral centre of every track (profile x, + = right) */
+  tracks: number[];
+  /** distance between sleepers, metres */
+  sleeperSpacing: number;
+  /** overhead line: height of the contact wire above the rail head and the distance between masts, metres */
+  catenary: { height: number; spacing: number } | null;
+  /** light signals: distance between them and the arc length of the first one, metres */
+  signals: { spacing: number; start: number } | null;
+}
+
 export interface ProfileData {
   name: string;
   points: ProfilePoint[];
@@ -79,6 +93,8 @@ export interface ProfileData {
   /** half width of the whole cross-section */
   outerHalfWidth: number;
   vary?: (ctx: VaryContext) => VaryResult;
+  /** present for railway profiles */
+  rail?: RailSpec;
 }
 
 export type ParamType = 'int' | 'float' | 'bool' | 'enum';

@@ -90,6 +90,19 @@ export default (p, B) => B.bridge('Holzsteg')
   .railing('timber');
 `;
 
+export const EISENBAHNBRUECKE = `
+// Eisenbahnbrücke: Betontrog auf Pfeilerjochen (Schotterbett bleibt, Fahrleitungsmasten stehen auf dem Rand)
+export const params = {
+  maxSpan: { type: 'float', label: 'Max. Spannweite', min: 15, max: 70, step: 1, default: 36 },
+  box:     { type: 'float', label: 'Trägerhöhe', min: 0.8, max: 3, step: 0.1, default: 1.5 },
+};
+export default (p, B) => B.bridge('Eisenbahnbrücke')
+  .deck({ thickness: p.box, material: 'concrete' })
+  .piers({ maxSpan: p.maxSpan, shape: 'wall', width: 3.2, depth: 1.6, taper: 0.25, cap: true, capHeight: 0.9, footing: 0.7, minHeight: 3 })
+  .abutments({ depth: 3, wing: 8 })
+  .railing('steel');
+`;
+
 export const BRIDGE_PRESET_SOURCES: Record<string, string> = {
   holzsteg: HOLZSTEG_BRUECKE,
   plattenbruecke: PLATTENBRUECKE,
@@ -97,4 +110,5 @@ export const BRIDGE_PRESET_SOURCES: Record<string, string> = {
   viadukt: VIADUKT,
   bogenbruecke: BOGENBRUECKE,
   fachwerkbruecke: FACHWERKBRUECKE,
+  eisenbahnbruecke: EISENBAHNBRUECKE,
 };

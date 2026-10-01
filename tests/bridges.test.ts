@@ -25,7 +25,7 @@ const bridges = new BridgeLibrary();
 
 describe('bridge code', () => {
   it('all presets compile, evaluate and have parameters with defaults', () => {
-    expect(bridges.names().sort()).toEqual(['balkenbruecke', 'bogenbruecke', 'fachwerkbruecke', 'holzsteg', 'plattenbruecke', 'viadukt']);
+    expect(bridges.names().sort()).toEqual(['balkenbruecke', 'bogenbruecke', 'eisenbahnbruecke', 'fachwerkbruecke', 'holzsteg', 'plattenbruecke', 'viadukt']);
     for (const n of bridges.names()) {
       const b = bridges.resolve(n);
       expect(b.deck.thickness, n).toBeGreaterThan(0);

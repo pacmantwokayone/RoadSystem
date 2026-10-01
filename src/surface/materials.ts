@@ -42,6 +42,7 @@ export const DEFAULT_MATERIAL_DEFS: Record<string, MaterialDef> = {
   curb:           { kind: 'stone', color: 0xaaa9a4, color2: 0x84837e, tileM: 1.0, noise: 0.5 },
   sidewalk:       { kind: 'concrete', color: 0xaaa8a2, tileM: 1.5, noise: 0.45, edgeDirt: 0.5 },
   gravel:         { kind: 'gravel', color: 0x9a9588, color2: 0xc4bfae, tileM: 1.5, noise: 0.8, tracks: 0.6, edgeDirt: 0.5 },
+  ballast:        { kind: 'gravel', color: 0x86837e, color2: 0x5f5d59, tileM: 0.45, noise: 0.95, tracks: 0, edgeDirt: 0.15 },
   gravel_fine:    { kind: 'gravel', color: 0xa39d8c, color2: 0xcfc9b6, tileM: 1.0, noise: 0.5, tracks: 0.3, edgeDirt: 0.6 },
   dirt:           { kind: 'dirt', color: 0x7a6248, color2: 0x5d4a35, tileM: 2.0, noise: 0.7, tracks: 0.9, edgeDirt: 0.2 },
   path_dirt:      { kind: 'dirt', color: 0x8a7253, color2: 0x6d5841, tileM: 1.5, noise: 0.7, tracks: 0.2, edgeDirt: 0.1 },

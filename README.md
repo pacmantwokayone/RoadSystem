@@ -25,6 +25,10 @@ Phase 0–8 fertig plus Tunnel/Kreisel (Grundlagen) (Setup, Core, Profile + Extr
   Terrain-Carve als reine Funktion (`WaterField`), Shader mit Ufer-/Hindernis-/Stromschnellen-Schaum, Felsen, Partikel (Strömung, Gischt, Nebel), Stile als Code (`WaterLibrary`), `WaterLayer`;
   dazu `editor/waterEditor.ts` (Werkzeuge Fluss/See, Inspector) und die Testseite `artifact/`
 - `src/tunnel` – Tunnel: Abschnitte aus Punkten mit Typ `tunnel`, Auskleidung + Lichtbänder, Portale, Geländeeinschnitt (`TunnelField`), `TunnelLayer`/`TunnelSystem`
+- `src/rail` – Schienen: Gleisprofile (`gleis`, `gleis_doppel`, `bahnhof`; `.rail().catenary().signals()` im Profil-DSL), Schwellen, Schienen, Fahrleitung (Masten mit Auslegern,
+  Tragseil mit Durchhang, Fahrdraht mit Zickzack, Hänger), Lichtsignale, Perrondächer; `RailLayer`. Gleisbett = normale Strassenoberfläche, daher gehen Brücken (`eisenbahnbruecke`, Bogenviadukt),
+  Tunnel und Geländeanpassung ohne Sonderfall
+- `src/network/branch.ts` + `interchange.ts` – Abzweige (Fahrstreifen-/Gleis-Weiche wächst aus dem Rand der Hauptstrasse) und ein Autobahnkreuz (Hochstrasse auf Stelzen, vier Flyover-Rampen); Brückenpfeiler weichen Strassen darunter aus
 - `src/network/roundabout.ts` – Kreisel als Ring aus Strassen + Knoten (`buildRoundabout`), `findRoundabouts`; Mittelinsel im `IslandLayer`
 - `src/junction` – Knoten-Steuerung (Vortritt, Haltelinien, Fussgängerstreifen) und Ampel-Phasenplan/-Controller (reine Funktionen der Zeit);
   dazu `props/signalLayer.ts` (Ampeln, Lampen per Vertexfarbe), `mesh/junctionMarkings.ts`, `network/pavement.ts` + `mesh/junctionPavement.ts` (Trottoir-Ecken)
@@ -45,7 +49,7 @@ npm run dev        # Demo + Editor (Wählen/Zeichnen, Profil-/Material-Code live
                    # Props: ?cliff=1 (Leitplanken am Abgrund), ?village=1 (Kreuzung mit Allee/Laternen/Vortritt),
                    #        ?assets=1&flat=1 (alle Props + Schilder), ?props=0 (ausblenden)
                    # Brücken: ?bridges=1 (6 Typen über Schluchten), ?rivers=1 (Fluss + Vorschläge im Tab „Brücke“)
-                   # Wasser + Verkehrsfeld: ?water=1 (Bergsee, Wildbach, 400-m-Wasserfall, Talfluss mit Brücke, unterer See, Kreisel, Ampelkreuzung, Autobahn mit Ausfahrt, Tunnel), &particles=0
+                   # Wasser + Verkehrsfeld: ?water=1 (Bergsee, Wildbach, 400-m-Wasserfall, Talfluss mit Brücke, unterer See, Kreisel, Ampelkreuzung, Autobahnkreuz, Bahnstrecke mit Bahnhof/Viadukt/Tunneln, Tunnel), &particles=0
                    # Ampeln: ?signals=1&flat=1 (Kreuzung mit Ampeln + Trottoir), ?t=12 (Ampelzeit einfrieren), ?sigspeed=5 (schneller)
 node artifact/build.mjs   # Testseite: artifact/dist/index.html (eine Datei, three.js eingebettet); --csp: Variante ohne eval zum Testen
 npm test           # Vitest

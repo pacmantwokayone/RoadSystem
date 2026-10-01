@@ -489,8 +489,25 @@ gewöhnliche Kreuzung, die Zufahrten haben einen niedrigeren Rang und bekommen d
 Zufahrt, z. B. die Talstrasse mit Brücke); `findRoundabouts` erkennt Ringe im Netz wieder (zusammenhängende `kreisel`-Strassen auf einem Kreis). Die **Mittelinsel** (Bordstein, Rasen, Baum, Sträucher) macht der
 `IslandLayer` aus dem erkannten Ring — sie wird nicht gespeichert, sondern folgt dem Netz.
 
-**Autobahn-Abzweigung:** eine Ausfahrt ist eine Strasse (`auffahrt`), die an einem Knoten der Autobahn (Knoten-Steuerung `none`) in ~25° abzweigt; die Kreuzungsgeometrie (Y-Wedge) deckt das ab. Es gibt **keine** Verzögerungs-/
-Beschleunigungsspuren und keine Verflechtung — die Ausfahrt beginnt als eigene Fahrbahn. Auf-/Ausfahrten mit Spurzusatz, Kleeblatt und Überführungen bleiben Phase 11.
+**Abzweige** (`network/branch.ts`): ein Abzweig (Ausfahrt, Einfahrt, Rampe, Gleis-Weiche) braucht keine Kreuzung. `branchPoints({main, s, side, halfMain, halfBranch, taper, gap, tail, merge})` erzeugt die ersten Punkte
+einer neuen Strasse aus der Mittellinie der Hauptstrasse: sie beginnt als schmaler Streifen am Rand der Hauptfahrbahn (Querschnitt über `widthScale` auf ~0.1 verkleinert), wächst über den Taper (default 90 m) auf volle Breite
+und entfernt sich dabei seitlich (`halfMain + halfBranch·w + gap·u²`); die Höhe folgt der Hauptstrasse. Es ist ein Generator: wird die Hauptstrasse später verschoben, folgt der Abzweig nicht. Mit `merge` läuft die Punktliste
+zur Hauptstrasse hin (Einfahrt). Für Gleise: `halfMain` = Abstand des Hauptgleises von der Achse, `halfBranch = 0`, `gap` = Gleisabstand.
+
+**Autobahnkreuz** (`network/interchange.ts`, `buildStackInterchange`): Autobahn A auf dem Boden, Autobahn B auf einer Hochstrasse darüber (Brücke `viadukt`, Zufahrtsdämme mit ≤ 4.5 % Steigung), vier Flyover-Rampen (je ein Quadrant),
+die in der Luft von B abzweigen, in einer Vierteldrehung sinken und am Boden in A einfädeln — alles gewöhnliche `RoadDef`s. Rampenabschnitte > 4.5 m über Grund sind Brücken, tiefere liegen auf einem Damm (`elev: 'fixed'`).
+**Pfeiler weichen aus** (`pierPositionsFor`, `sections.ts`): ein Pfeiler, der auf eine Strasse unter der Brücke fallen würde, rutscht zum nächsten freien Punkt (Spannweiten werden dadurch länger/kürzer); die Strasse unten wird über
+`RoadRuntime.siblings()` gefunden. **Grenze:** das Ausweichen wird beim Bau berechnet — wird nur die untere Strasse später verschoben, ziehen die Pfeiler nicht nach, bis die Brücke neu gebaut wird.
+Keine Verzögerungs-/Beschleunigungsspuren, keine Verflechtungsstrecken.
+
+**Schienen** (`rail/`, Profile `gleis`, `gleis_doppel`, `bahnhof`): ein Gleis ist eine Strasse, deren Profil ein **Gleisbett** (Material `ballast`, Segmentart `ballast`/`walkway`/`platform` — keine Fahrbahnart, also kein Kreuzungs-Patch) und eine `RailSpec`
+(`R.profile(..).rail({tracks, gauge, sleeperSpacing}).catenary({height, spacing}).signals({spacing, start})`) hat. Das Gleisbett ist normale Strassenoberfläche — Geländeanpassung, Brücken, Tunnel und Pfeilerausweichen gelten ohne Sonderfall.
+Der `RailLayer` baut pro Chunk (aus absoluten Bogenlängen, damit Chunkgrenzen nichts verdoppeln): **Schwellen** (Betonbalken alle 0.6 m), **Schienen** (Prisma pro Seite, durchgehend), **Fahrleitung** (Masten mit Ausleger/Strebe
+alle 56 m aussen am Bett, Tragseil mit Durchhang, Fahrdraht 5.5 m über Schienenoberkante mit ±0.2 m Zickzack, Hänger; im Tunnel nur Fahrdraht mit Hängern an der Decke; keine Masten im Tunnel), **Lichtsignale** (rechts neben dem Gleis,
+dem Zug zugewandt, Zeigerbild statisch rot/gelb/grün aus dem Strassen-Seed). Eisenbahnbrücken: `defaultBridgeName` wählt bei Gleisprofilen `eisenbahnbruecke`; der Demo-Viadukt ist eine Bogenbrücke. Der Bahntunnel ist höher
+(`tunnelDims`: Wand 4.0 m + Bogen 2.9 m, damit der Fahrdraht Platz hat). Der Bahnhof hat Aussenbahnsteige (55 cm über SO) mit gelber Kante, Dächern (`platform_canopy`), Bänken und Leuchten als normale Prop-Regeln.
+**Grenzen:** keine Züge/Fahrzeuge; keine Bahnübergänge (Gleis kreuzt Strassen nur über/unter ihnen); die Weiche ist ein Abzweig-Generator ohne Herzstück/Zungen (zwei Gleise laufen auseinander); Masten nur an den Aussenseiten
+(Mittelgleise bei > 2 Gleisen ohne Mast); Signale statisch; Gleise brauchen grosse Radien (`smooth(140…200)`), enge Kurven werden nicht geprüft.
 
 **Tunnel** (`tunnel/`): Punkte mit Typ `tunnel` (oder `gallery`, bisher gleich behandelt) bilden einen Abschnitt, der exakt auf den Punkten beginnt und endet (`tunnelSections`). Die Röhre liegt im Berg und ist von aussen nicht sichtbar; man sieht
 (1) das **Portal** — eine Stirnwand aus Spalten zwischen dem abgegrabenen Boden und dem Hang dahinter, mit ausgeschnittenem Bogen, und (2) die **Auskleidung** (Bogenquerschnitt, Lichtbänder an der Decke), die man durch die Öffnung sieht. Dafür wird das

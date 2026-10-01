@@ -25,6 +25,15 @@ export const DEFAULT_PROP_MATERIALS: Record<string, Maker> = {
   marker: lambert(0xff00ff),
   tunnel_lining: lambert(0xd9d4c7, { side: THREE.DoubleSide }),
   tunnel_light: () => new THREE.MeshBasicMaterial({ color: 0xfff1c4, side: THREE.DoubleSide }),
+  sleeper: lambert(0x817d76),
+  rail_steel: lambert(0x7a746d),
+  rail_mast: lambert(0x9aa1a6),
+  rail_wire: lambert(0x2b2d30),
+  rail_lamp_red: () => new THREE.MeshBasicMaterial({ color: 0xff2a1a }),
+  rail_lamp_green: () => new THREE.MeshBasicMaterial({ color: 0x2cff6a }),
+  rail_lamp_yellow: () => new THREE.MeshBasicMaterial({ color: 0xffc21a }),
+  rail_lamp_off: lambert(0x161617),
+  platform_roof: lambert(0x6f7a82, { side: THREE.DoubleSide }),
   portal_concrete: lambert(0xbfbcb3, { side: THREE.DoubleSide }),
 };
 
