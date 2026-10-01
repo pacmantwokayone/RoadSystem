@@ -13,6 +13,8 @@ export interface LoftOptions {
   smooth?: boolean;
   capStart?: boolean;
   capEnd?: boolean;
+  /** faces point into the ring instead of out of it (the inside of a tube) */
+  inward?: boolean;
 }
 
 const centroid = (ring: readonly THREE.Vector3[]): THREE.Vector3 => {
@@ -34,7 +36,7 @@ export function loft(raw: Raw, rings: readonly (readonly THREE.Vector3[])[], o: 
     return u;
   });
   const a = new THREE.Vector3(), b = new THREE.Vector3(), n = new THREE.Vector3(), out = new THREE.Vector3();
-  const vn = (k: number, j: number): THREE.Vector3 => new THREE.Vector3().subVectors(rings[k][j], cs[k]).normalize();
+  const vn = (k: number, j: number): THREE.Vector3 => new THREE.Vector3().subVectors(rings[k][j], cs[k]).normalize().multiplyScalar(o.inward ? -1 : 1);
 
   for (let k = 0; k < rings.length - 1; k++) {
     for (let j = 0; j < N; j++) {
@@ -49,8 +51,10 @@ export function loft(raw: Raw, rings: readonly (readonly THREE.Vector3[])[], o: 
       }
       n.normalize();
       out.copy(p00).add(p01).add(p10).add(p11).multiplyScalar(0.25).sub(cs[k]).addScaledVector(cs[k + 1].clone().sub(cs[k]), -0.5);
-      const flip = n.dot(out) < 0;
-      if (flip) n.negate();
+      const outward = n.dot(out) >= 0;
+      const flip = outward === !!o.inward; // an inward loft shows the faces that point to the middle
+      if (n.dot(out) < 0) n.negate();
+      if (o.inward) n.negate();
       const nn = o.smooth ? [vn(k, j), vn(k, j1), vn(k + 1, j), vn(k + 1, j1)] : [n, n, n, n];
       const i00 = raw.vertex(p00, nn[0], perim[k][j], along[k]);
       const i01 = raw.vertex(p01, nn[1], perim[k][j + 1], along[k]);

@@ -456,8 +456,8 @@ Wasserfälle bekommen Schluchtwände und einen Gumpen (Becken am Fuss). Das Terr
 
 **Darstellung:** ein Shader-Material für Fluss/See/Fall (`water/waterMaterial.ts`, ohne Texturen): tiefenabhängige Farbe aus dem echten Terrain, Wellen, **Strömungsstreifen in
 Fliessrichtung**, Schaum am Ufer (aus der Tiefe), auf Stromschnellen (Turbulenz) und **um und hinter allem, was aus dem Wasser ragt** (Felsen, Brückenpfeiler → `Obstacle`),
-weisse Schleier mit Streifen am Wasserfall. Ufer: Streifen mit einem Strassen-Material (`banks.material`), Felsen (6 Varianten, in/neben dem Wasser), nasses Gelände (Tint).
-**Partikel** (`water/particles.ts`): Schaumflecken, die mit der Strömung treiben (Fliessrichtung sichtbar), Gischt und Nebel am Wasserfall/auf Stromschnellen, nur nahe der Kamera.
+weisse Schleier mit Streifen am Wasserfall. **Stromschnellen** sind eine echte Treppe (Vertex-Versatz): bei jedem Absatz eine schaumige Stufe in Form einer Rinne, dahinter ein Wechselsprung und eine ruhigere „Zunge“, dazu stehende Wellen, dichte Felsen. **Gumpen** (`pool`-Shader) wachsen mit der Fallhöhe (Radius/Tiefe nach `poolDims`): weisser Aufprall, Ringe, Schaumstreifen nach aussen, Randfelsen. Ufer: Streifen mit einem Strassen-Material (`banks.material`), Felsen (6 Varianten, in/neben dem Wasser), nasses Gelände (Tint).
+**Partikel** (`water/particles.ts`): Spritzer an jeder Stromschnellen-Stufe und im Gumpen, Nebel/Dunst am Fuss von Wasserfällen (Grösse nach Fallhöhe), nur nahe der Kamera; die Fliessrichtung zeigt der Shader (Streifen und Schaum, die mit der Strömung wandern), nicht Partikel.
 
 **Stile als Code** (`water/style.ts`, `WaterLibrary`, wie Profile/Brücken): `W.river('Name').size().colors().clarity().banks().flow().foam().rocks().particles().fall()` /
 `W.lake(…)…waves()`; Presets: bach, wildbach, fluss, strom, bergsee, gletschersee, weiher. Gespeichert im Bibliotheksdokument (`waters`).
@@ -479,6 +479,26 @@ weisse Schleier mit Streifen am Wasserfall. Ufer: Streifen mit einem Strassen-Ma
 - Partikel sind CPU-gesteuerte Punkte (max. ~6000), keine Wasseroberfläche-Refraktion/-Reflexion der Umgebung (Himmelsfarbe + Fresnel).
 - Seen haben keinen Abfluss-Pegel: Pegel ändern sich nur von Hand; ein See mit zwei Ausflüssen ist erlaubt, aber nicht überprüft.
 - Wasserfarben/Schaum sind Lambert-unabhängig: kein Schattenwurf auf dem Wasser, keine Nacht-Beleuchtung.
+
+---
+
+## 2k. Umsetzungsnotizen Kreisel, Autobahn-Abzweigung, Tunnel
+
+**Kreisel** (`network/roundabout.ts`): kein neuer Datentyp. Ein Kreisel ist ein Ring aus kurzen Strassen (Profil `kreisel`, Rang 6) zwischen Knoten, je ein Knoten pro Zufahrt; jeder Knoten ist eine
+gewöhnliche Kreuzung, die Zufahrten haben einen niedrigeren Rang und bekommen dadurch automatisch „Kein Vortritt“. `buildRoundabout({x, z, radius, arms})` erzeugt Ring, Knoten und Zufahrten (oder nimmt eigene Punktlisten für eine
+Zufahrt, z. B. die Talstrasse mit Brücke); `findRoundabouts` erkennt Ringe im Netz wieder (zusammenhängende `kreisel`-Strassen auf einem Kreis). Die **Mittelinsel** (Bordstein, Rasen, Baum, Sträucher) macht der
+`IslandLayer` aus dem erkannten Ring — sie wird nicht gespeichert, sondern folgt dem Netz.
+
+**Autobahn-Abzweigung:** eine Ausfahrt ist eine Strasse (`auffahrt`), die an einem Knoten der Autobahn (Knoten-Steuerung `none`) in ~25° abzweigt; die Kreuzungsgeometrie (Y-Wedge) deckt das ab. Es gibt **keine** Verzögerungs-/
+Beschleunigungsspuren und keine Verflechtung — die Ausfahrt beginnt als eigene Fahrbahn. Auf-/Ausfahrten mit Spurzusatz, Kleeblatt und Überführungen bleiben Phase 11.
+
+**Tunnel** (`tunnel/`): Punkte mit Typ `tunnel` (oder `gallery`, bisher gleich behandelt) bilden einen Abschnitt, der exakt auf den Punkten beginnt und endet (`tunnelSections`). Die Röhre liegt im Berg und ist von aussen nicht sichtbar; man sieht
+(1) das **Portal** — eine Stirnwand aus Spalten zwischen dem abgegrabenen Boden und dem Hang dahinter, mit ausgeschnittenem Bogen, und (2) die **Auskleidung** (Bogenquerschnitt, Lichtbänder an der Decke), die man durch die Öffnung sieht. Dafür wird das
+Gelände vor dem Portal ausgehoben (`TunnelField`, wie `WaterField` eine reine Funktion `modify(x, z, base)`): ein Einschnitt mit flachem Boden und Böschung 1 : 1.5, der nach 28 m mit 5.5 % ansteigt und ausläuft; hinter dem Portal wird der Hang ab der Portaloberkante mit 45° zurückgeschnitten.
+`TunnelSystem` hält das in Sync (Debounce, Terrain neu erzeugen, nahe Strassen neu bauen; `RoadSystem.invalidateRect`). Das Mock-Terrain hat dafür **benannte Modifier** (`setModifier(id, fn)`): Wasser und Tunnel formen das Gelände gleichzeitig.
+
+**Bekannte Grenzen (Tunnel):** keine Lüftungsschächte, Nothaltebuchten, Querstollen, Beleuchtungsgruppen; keine Galerie mit einseitiger Öffnung; Portale sind eine ebene Stirnwand senkrecht zur Strasse (keine schräge Stirn, keine Flügelmauern ausser den Spalten der Schnittkante);
+das Terrain über der Röhre wird nicht geprüft (die Überdeckung ist Sache des Entwurfs; ist der Hang niedriger als die Röhre, ragt die Auskleidung heraus); im echten `StreamTerrain` braucht der Einschnitt denselben Modifier-Hook wie das Wasser.
 
 ---
 
@@ -712,9 +732,9 @@ Jede Phase endet mit etwas **Sichtbarem und Lauffähigem** in der Demo (gegen da
 | 7 | **Ampeln** ✅ | Signalgruppen, automatischer Phasenplan, Fußgängerstreifen, Haltelinien |
 | 8 | **Brücken** ✅ | Balken/Bogen/Viadukt, Pfeiler bis Terrain, Widerlager, Geländer, Flusskreuzungs-Vorschlag |
 | 8b | **Wasser** ✅ | Handgezeichnete Flüsse, Seen, Stromschnellen, Wasserfälle (Carve, Schaum, Partikel, Stil-Code), Testseite (Artefakt) |
-| 9 | **Tunnel** | Röhre, Portal-Fassade, Portal-Graben (Carve), Überdeckungs-Validierung, Beleuchtung, Galerien |
+| 9 | **Tunnel** ✅ (Grundlage) | Röhre mit Auskleidung + Licht, Portale, Einschnitt (Carve) — siehe 2k; offen: Überdeckungs-Validierung, Galerien, Lüftung |
 | 10 | **Terrain-Modifier** | `TerrainModifier`-Interface, `RoadTerrainModifier` (Absenken + Anheben), Patch-Vorschlag für `StreamTerrain`, Böschungs-Skirts |
-| 11 | **Erweiterte Topologie** | Kreisel, Auf-/Abfahrten, Autobahnkreuz-Bausteine, Unterführungen |
+| 11 | **Erweiterte Topologie** | Kreisel ✅ (Ring aus Knoten, 2k), Auf-/Abfahrten mit Spurzusatz, Autobahnkreuz-Bausteine, Unterführungen |
 | 12 | **In-Game-Editor** | `mountEditor(host)` im echten Spiel, Eingabe-Arbitrierung, `HttpRoadStore`, Konfliktdialog, Auth-Hinweise |
 | 13 | **swissTLM3D-Import** | `tools/`-Skript (Python wie `extract_rivers.py`) + Importer → Netz aus Objektart/Belag/Kunstbaute (nur Strassen: Flüsse werden von Hand gezeichnet, siehe 2j) |
 | 14 | **Gameplay-API** | `sampleAt`, Lane-Graph, `findPath`, Collider-Export, Road-Mask-Textur, Vegetations-Ausschluss |

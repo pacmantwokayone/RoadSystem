@@ -432,6 +432,30 @@ __profile = (p, R) => R.profile('Auffahrt').rank(7)
 
 ;return { params: typeof params !== 'undefined' ? params : {}, build: __profile };
 },
+  "R\n\"use strict\"; let __profile;\n\n// Kreisel: einspuriger Ring (Einbahn), Bordstein zur Mittelinsel; Zufahrten haben Kein Vortritt (Rang 6 > Rang der Zufahrten)\nconst params = {\n  lane:   { type: 'float', label: 'Fahrbahnbreite', min: 3.5, max: 5.5, step: 0.1, default: 4.5 },\n  apron:  { type: 'float', label: 'Überfahrbarer Rand', min: 0, max: 2, step: 0.1, default: 0.0 },\n  lamps:  { type: 'bool',  label: 'Laternen aussen', default: true },\n};\n__profile = (p, R) => {\n  const prof = R.profile('Kreisel').rank(6)\n    .thickness(0.8).bodyMaterial('subgrade').smooth(3)\n    .both(h => {\n      h.surface(p.lane, 'asphalt', { kind: 'lane', slope: -0.02 }).edgeLine({ back: 0.12, width: 0.12, color: 'white' });\n      if (p.apron > 0.05) h.surface(p.apron, 'granite', { kind: 'shoulder', slope: -0.02 });\n      h.step(0.12, 'curb', { kind: 'curb' }).surface(0.15, 'granite', { kind: 'curb' });\n      h.slope(1.2, -0.08, 'grass', { kind: 'verge' });\n    });\n  if (p.lamps) prof.lamps({ asset: 'lamp', spacing: 28, offset: 1.0, side: 'right' });\n  return prof;\n};\n\n;return { params: typeof params !== 'undefined' ? params : {}, build: __profile };": function (R) {
+"use strict"; let __profile;
+
+// Kreisel: einspuriger Ring (Einbahn), Bordstein zur Mittelinsel; Zufahrten haben Kein Vortritt (Rang 6 > Rang der Zufahrten)
+const params = {
+  lane:   { type: 'float', label: 'Fahrbahnbreite', min: 3.5, max: 5.5, step: 0.1, default: 4.5 },
+  apron:  { type: 'float', label: 'Überfahrbarer Rand', min: 0, max: 2, step: 0.1, default: 0.0 },
+  lamps:  { type: 'bool',  label: 'Laternen aussen', default: true },
+};
+__profile = (p, R) => {
+  const prof = R.profile('Kreisel').rank(6)
+    .thickness(0.8).bodyMaterial('subgrade').smooth(3)
+    .both(h => {
+      h.surface(p.lane, 'asphalt', { kind: 'lane', slope: -0.02 }).edgeLine({ back: 0.12, width: 0.12, color: 'white' });
+      if (p.apron > 0.05) h.surface(p.apron, 'granite', { kind: 'shoulder', slope: -0.02 });
+      h.step(0.12, 'curb', { kind: 'curb' }).surface(0.15, 'granite', { kind: 'curb' });
+      h.slope(1.2, -0.08, 'grass', { kind: 'verge' });
+    });
+  if (p.lamps) prof.lamps({ asset: 'lamp', spacing: 28, offset: 1.0, side: 'right' });
+  return prof;
+};
+
+;return { params: typeof params !== 'undefined' ? params : {}, build: __profile };
+},
   "M\n\"use strict\"; let __material;\n// asphalt: see M.asphalt(…) options — color, color2, tileM, noise, tracks, cracks, patches, edgeDirt, wornPaint\n__material = (M) => M.asphalt({\n  color: 0x4d4f54,\n  tileM: 2.5,\n  noise: 0.5,\n  tracks: 0.8,\n  cracks: 0.5,\n  patches: 0.5,\n  edgeDirt: 0.4,\n});\n\n;return __material;": function (M) {
 "use strict"; let __material;
 // asphalt: see M.asphalt(…) options — color, color2, tileM, noise, tracks, cracks, patches, edgeDirt, wornPaint

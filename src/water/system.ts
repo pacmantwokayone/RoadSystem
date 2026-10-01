@@ -17,6 +17,8 @@ import type { LakeDef, RiverDef } from './types';
 /** What the water system needs from a terrain: heights, settledness, and a way to have the carve applied. */
 export interface WaterTerrain extends TerrainSource {
   modifier?: ModifierFn | null;
+  /** named modifiers (several systems shape the ground); preferred over `modifier` when present */
+  setModifier?(id: string, fn: ModifierFn | null): void;
   tint?: TintFn | null;
   /** regenerate the loaded tiles touching the rect (after `modifier` changed); returns how many */
   invalidate?(rect?: Rect): number;
@@ -259,7 +261,8 @@ export class WaterSystem {
     if (!r) return;
     this.dirty = null;
     const field = this.fieldValue;
-    this.terrain.modifier = field.empty ? null : (x, z, b) => field.modify(x, z, b);
+    const mod: ModifierFn | null = field.empty ? null : (x, z, b) => field.modify(x, z, b);
+    if (this.terrain.setModifier) this.terrain.setModifier('water', mod); else this.terrain.modifier = mod;
     if (this.opts.tintBanks && 'tint' in this.terrain) {
       this.terrain.tint = field.empty ? null : (x, z, _y, out) => {
         const d = field.distanceToWater(x, z, 14);

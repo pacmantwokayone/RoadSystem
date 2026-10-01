@@ -23,6 +23,9 @@ export const DEFAULT_PROP_MATERIALS: Record<string, Maker> = {
   foliage_light: lambert(0x5d8a3d, { flatShading: true }),
   sign_back: lambert(0x9a9da0),
   marker: lambert(0xff00ff),
+  tunnel_lining: lambert(0xd9d4c7, { side: THREE.DoubleSide }),
+  tunnel_light: () => new THREE.MeshBasicMaterial({ color: 0xfff1c4, side: THREE.DoubleSide }),
+  portal_concrete: lambert(0xbfbcb3, { side: THREE.DoubleSide }),
 };
 
 export class PropMaterials {

@@ -5,7 +5,7 @@ Eigenständiges Modul – ändert keine Spieldateien. Plan und Architektur: [`do
 
 ## Stand
 
-Phase 0–8 fertig (Setup, Core, Profile + Extrusion, Persistenz + Editor, Netzwerk + Kreuzungen, Oberflächen + Markierungen, Props, Ampeln + Kreuzungsdetails, Brücken) und **Wasser** (handgezeichnete Flüsse, Seen, Wasserfälle):
+Phase 0–8 fertig plus Tunnel/Kreisel (Grundlagen) (Setup, Core, Profile + Extrusion, Persistenz + Editor, Netzwerk + Kreuzungen, Oberflächen + Markierungen, Props, Ampeln + Kreuzungsdetails, Brücken) und **Wasser** (handgezeichnete Flüsse, Seen, Wasserfälle):
 
 - `src/core` – Weltkonvention (`simToThree`), zentripetaler Catmull-Rom (`PathCurve`), Frames/Banking,
   krümmungsadaptives Sampling, Höhen-Alignment (`drape` mit FIR-Glättung, naht-konsistent)
@@ -24,6 +24,8 @@ Phase 0–8 fertig (Setup, Core, Profile + Extrusion, Persistenz + Editor, Netzw
 - `src/water` – Flüsse, Seen, Stromschnellen und Wasserfälle von Hand gezeichnet (`RiverDef`/`LakeDef` im Strassendokument), Hydrologie (Pegel nie bergauf, ballistischer Fall),
   Terrain-Carve als reine Funktion (`WaterField`), Shader mit Ufer-/Hindernis-/Stromschnellen-Schaum, Felsen, Partikel (Strömung, Gischt, Nebel), Stile als Code (`WaterLibrary`), `WaterLayer`;
   dazu `editor/waterEditor.ts` (Werkzeuge Fluss/See, Inspector) und die Testseite `artifact/`
+- `src/tunnel` – Tunnel: Abschnitte aus Punkten mit Typ `tunnel`, Auskleidung + Lichtbänder, Portale, Geländeeinschnitt (`TunnelField`), `TunnelLayer`/`TunnelSystem`
+- `src/network/roundabout.ts` – Kreisel als Ring aus Strassen + Knoten (`buildRoundabout`), `findRoundabouts`; Mittelinsel im `IslandLayer`
 - `src/junction` – Knoten-Steuerung (Vortritt, Haltelinien, Fussgängerstreifen) und Ampel-Phasenplan/-Controller (reine Funktionen der Zeit);
   dazu `props/signalLayer.ts` (Ampeln, Lampen per Vertexfarbe), `mesh/junctionMarkings.ts`, `network/pavement.ts` + `mesh/junctionPavement.ts` (Trottoir-Ecken)
 - `src/network` – `junction.ts` (Kreuzungsgeometrie: Setbacks, Ecken-Rundung, Randpolygon, Rückfälle), `graph.ts` (Netz normalisieren),
@@ -43,7 +45,7 @@ npm run dev        # Demo + Editor (Wählen/Zeichnen, Profil-/Material-Code live
                    # Props: ?cliff=1 (Leitplanken am Abgrund), ?village=1 (Kreuzung mit Allee/Laternen/Vortritt),
                    #        ?assets=1&flat=1 (alle Props + Schilder), ?props=0 (ausblenden)
                    # Brücken: ?bridges=1 (6 Typen über Schluchten), ?rivers=1 (Fluss + Vorschläge im Tab „Brücke“)
-                   # Wasser: ?water=1 (Bergsee, Wildbach, 400-m-Wasserfall, Talfluss mit Brücke, unterer See), &particles=0
+                   # Wasser + Verkehrsfeld: ?water=1 (Bergsee, Wildbach, 400-m-Wasserfall, Talfluss mit Brücke, unterer See, Kreisel, Ampelkreuzung, Autobahn mit Ausfahrt, Tunnel), &particles=0
                    # Ampeln: ?signals=1&flat=1 (Kreuzung mit Ampeln + Trottoir), ?t=12 (Ampelzeit einfrieren), ?sigspeed=5 (schneller)
 node artifact/build.mjs   # Testseite: artifact/dist/index.html (eine Datei, three.js eingebettet); --csp: Variante ohne eval zum Testen
 npm test           # Vitest

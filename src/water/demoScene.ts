@@ -10,6 +10,9 @@ import type { LakeDef, RiverDef, RiverPoint } from './types';
 /** the level ground of the road test field */
 export const TRAFFIC_PAD = { x: 4380, z: 2350, flat: 700, blend: 380, y: 782 } as const;
 
+/** the hill between the village and the cliff foot, pierced by the Tunnelstrasse */
+export const TUNNEL_RIDGE = { x: 3800, z: 2480, amp: 60, sx: 95, sz: 230 } as const;
+
 const smooth = (a: number, b: number, v: number): number => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 export const WATER_DEMO = {
@@ -23,6 +26,12 @@ export const WATER_DEMO = {
 
 /** terrain of the demo scene (SIM x, z → height) */
 export function waterDemoHeight(x: number, z: number): number {
+  const rg = TUNNEL_RIDGE;
+  return valleyHeight(x, z) + rg.amp * Math.exp(-((x - rg.x) ** 2) / (2 * rg.sx * rg.sx) - ((z - rg.z) ** 2) / (2 * rg.sz * rg.sz));
+}
+
+/** the terrain without the tunnel ridge (what the Tunnelstrasse's height is planned against) */
+export function valleyHeight(x: number, z: number): number {
   const { plateau, valley, cliffX, cliffW, centreZ } = WATER_DEMO;
   const noise = (k: number): number => Math.sin(x / (170 * k) + z / (230 * k)) * 3 + Math.sin(x / (61 * k) - z / (83 * k)) * 1.2;
   const dz = Math.abs(z - centreZ);
@@ -102,6 +111,8 @@ export const WATER_DEMO_VIEWS: Record<string, { label: string; cam: [number, num
   signals: { label: 'Ampelkreuzung', cam: [4605, 800, -2545, 4550, 783, -2480] },
   tee: { label: 'Dorf-T', cam: [4210, 800, -2150, 4150, 782, -2205] },
   motorway: { label: 'Autobahn + Ausfahrt', cam: [4150, 835, -1880, 4380, 782, -2040] },
+  tunnelEast: { label: 'Tunnelportal Ost', cam: [4075, 800, -2420, 3960, 788, -2480] },
+  tunnelWest: { label: 'Tunnelportal West', cam: [3560, 850, -2520, 3640, 792, -2480] },
   confluence: { label: 'Zusammenfluss', cam: [3960, 830, -3090, 3900, 795, -3028] },
 };
 
@@ -115,6 +126,9 @@ export function waterDemoNetwork(ground: (x: number, z: number) => number = wate
   const gs = (list: Array<[number, number]>): RoadPoint[] => list.map(([x, z]) => g(x, z));
   const bridgeDeck = Math.round((Math.max(ground(4150, 2945), ground(4150, 3055), ground(4150, 3000) + 4) + 1.2) * 2) / 2;
   const bp = (z: number): RoadPoint => ({ x: 4150, y: bridgeDeck, z, mode: 'bridge' });
+  // the tunnel climbs from the village level to the level of the valley floor on the far side of the ridge
+  const yEast = valleyHeight(4050, 2480) + 0.3, yWest = valleyHeight(3640, 2480) + 0.3;
+  const tp = (x: number): RoadPoint => ({ x, y: yEast + ((yWest - yEast) * (3960 - x)) / 320, z: 2480, mode: 'tunnel' });
 
   const rb = buildRoundabout({
     id: 'kreisel', x: 4150, z: 2480, y: ground(4150, 2480), radius: 24,
@@ -122,7 +136,8 @@ export function waterDemoNetwork(ground: (x: number, z: number) => number = wate
       { angle: Math.PI / 2, profile: 'hauptstrasse', name: 'Talstrasse', road: { bridge: 'balkenbruecke' }, points: [g(4150, 3360), g(4150, 3200), bp(3055), bp(3000), bp(2945), g(4150, 2800), g(4150, 2650)] },
       { angle: 0, profile: 'hauptstrasse', name: 'Hauptstrasse', road: { startNode: 'sig' }, points: gs([[4550, 2480], [4350, 2480]]) },
       { angle: -Math.PI / 2, profile: 'dorfstrasse', name: 'Dorfstrasse', road: { startNode: 'tee' }, points: gs([[4150, 2200], [4150, 2340]]) },
-      { angle: Math.PI, profile: 'nebenstrasse', name: 'Feldweg', length: 170 },
+      // the Tunnelstrasse: west through the ridge in a tunnel, ending in a turning place just beyond the far portal
+      { angle: Math.PI, profile: 'hauptstrasse', name: 'Tunnelstrasse', points: [g(3585, 2480), tp(3640), tp(3720), tp(3800), tp(3880), tp(3960), g(4050, 2480)] },
     ],
   });
   const nodes: NodeDef[] = [

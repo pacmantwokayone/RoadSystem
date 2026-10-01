@@ -78,3 +78,8 @@ export * from './water/demoScene';
 export * from './water/bridgeObstacles';
 export * from './network/roundabout';
 export * from './props/islandLayer';
+export * from './tunnel/sections';
+export * from './tunnel/field';
+export * from './tunnel/geometry';
+export * from './tunnel/tunnelLayer';
+export * from './tunnel/tunnelSystem';

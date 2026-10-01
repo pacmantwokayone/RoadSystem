@@ -97,7 +97,19 @@ export class MockStreamTerrain implements TerrainSource {
   /** Subtracted from heightAt() like StreamTerrain.carveAt(); set by tests/tools. */
   carve: ((x: number, z: number) => number) | null = null;
   /** Changes the height the tiles are generated with (see `invalidate`): rivers carve their beds through this. */
-  modifier: ModifierFn | null = null;
+  get modifier(): ModifierFn | null {
+    if (!this.mods.size) return null;
+    const list = [...this.mods.values()];
+    return list.length === 1 ? list[0] : (x, z, base) => { let h = base; for (const m of list) h = m(x, z, h); return h; };
+  }
+  set modifier(fn: ModifierFn | null) {
+    this.setModifier('default', fn);
+  }
+  private readonly mods = new Map<string, ModifierFn>();
+  /** Several parties shape the ground (rivers, tunnel cuttings …): each keeps its own named modifier, they apply in the order first set. */
+  setModifier(id: string, fn: ModifierFn | null): void {
+    if (fn) this.mods.set(id, fn); else this.mods.delete(id);
+  }
   /** Colours the terrain mesh (wet banks, …). */
   tint: TintFn | null = null;
   lodFactor: number;
