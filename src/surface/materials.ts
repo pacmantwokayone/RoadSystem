@@ -96,6 +96,14 @@ export class MaterialRegistry {
     return this.defs.has(name);
   }
 
+  getDef(name: string): MaterialDef {
+    return this.defs.get(name) ?? FALLBACK;
+  }
+
+  names(): string[] {
+    return [...this.defs.keys()];
+  }
+
   /** Define or replace a material (e.g. swap in a real texture later). */
   define(name: string, def: MaterialDef): void {
     this.defs.set(name, def);

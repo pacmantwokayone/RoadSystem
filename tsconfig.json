@@ -12,9 +12,9 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "noEmit": true,
-    "types": ["vite/client"],
+    "types": ["vite/client", "node"],
     "baseUrl": ".",
-    "paths": { "roadsystem": ["src/index.ts"] }
+    "paths": { "roadsystem": ["src/index.ts"], "roadsystem/editor": ["src/editor/index.ts"] }
   },
   "include": ["src", "demo", "tests"]
 }

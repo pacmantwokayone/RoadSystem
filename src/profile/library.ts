@@ -33,6 +33,19 @@ export class ProfileLibrary {
     return this.compiled.has(name);
   }
 
+  /** All sources by name (what gets persisted). */
+  allSources(): Record<string, string> {
+    return Object.fromEntries(this.sources);
+  }
+
+  remove(name: string): void {
+    if (name === this.fallback) return;
+    this.sources.delete(name);
+    this.compiled.delete(name);
+    for (const k of [...this.cache.keys()]) if (k.startsWith(name + '|')) this.cache.delete(k);
+    for (const cb of this.listeners) cb(name);
+  }
+
   getSource(name: string): string | undefined {
     return this.sources.get(name);
   }

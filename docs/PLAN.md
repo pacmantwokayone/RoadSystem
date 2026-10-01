@@ -209,6 +209,26 @@ Gelesen, nicht verändert. Folgendes ist **verifiziert** und fließt ins Design 
 
 ---
 
+## 2d. Umsetzungsnotizen Phase 3 (Persistenz + Editor)
+
+- **`RoadStore`-Vertrag** mit Revisionen: `MemoryStore`, `StorageStore` (Demo), `HttpRoadStore`
+  (spiegelt `rivers.ts`: statische Datei → `…-save.php`-Fallback). Konflikt = 409 + Server-Revision; der
+  Editor fragt dann „trotzdem überschreiben?“. Dazu eine **PHP+MySQL-Referenz** in `docs/backend/`
+  (getestet gegen den echten Client, siehe dort).
+- **Undo/Redo** über unveränderliche Snapshots; Drags und Slider werden zu *einem* Schritt zusammengefasst
+  (Zeitfenster **oder** ausdrücklich gehaltene Geste – ein Drag auf einem langsamen Frame bleibt ein Schritt).
+- **Kein Flackern beim Bearbeiten:** ersetzt der Editor eine Straße, bleiben die alten Meshes sichtbar, bis
+  die neue Version komplett gebaut ist.
+- **Klick-Erkennung** nutzt `event.timeStamp` statt der Verarbeitungszeit (robust gegen langsame Frames);
+  Picking trifft Straßen-Meshes *und* Gelände (Parallaxe: die Straße liegt über dem Gelände).
+- **Profil-Code live:** CodeMirror 6 mit Autovervollständigung für die DSL und Materialnamen, Fehler
+  isoliert (letzte gültige Version bleibt aktiv), 2-D-Querschnitt daneben, Parameter-UI automatisch.
+- **Datenhygiene:** `y` aus dem Editor ist eine Terrainhöhe; Daten mit uneinheitlichen `y` (z. B. 0 neben
+  857) verzerren die 3D-Bogenlänge. Importer (swissTLM3D) müssen konsistente Höhen liefern.
+- **Editor ist ein eigener Einstiegspunkt** (`roadsystem/editor`), Runtime und Editor sind getrennt bündelbar.
+
+---
+
 ## 3. Kernkonzepte im Detail
 
 ### 3.1 Spline & Terrain-Anpassung
@@ -432,7 +452,7 @@ Jede Phase endet mit etwas **Sichtbarem und Lauffähigem** in der Demo (gegen da
 | 0 | **Setup** ✅ | Vite+TS+Vitest, Demo-Szene, **Mock-`StreamTerrain`** (Heightmap, Kachel-Streaming, `null`/`isSettledAt`, Logdepth-Renderer), Orbit-Kamera, Debug-Draw |
 | 1 | **Core** ✅ (ohne Kreuzungs-Prototyp) | `TerrainSource`-Adapter, `WorldAdapter`, Catmull-Rom + Bogenlänge, Frames, Krümmung, Höhenmodi (`fixed`/`drape`/`graded`), `resync()`; Tests. Parallel: Kreuzungs-Prototyp |
 | 2 | **Profil + Extrusion (MVP)** ✅ | Straße per Klick aufs Terrain zeichnen (`drape` auf gesettelte Höhe, `y` als Fallback); Presets Flurstraße & Hauptstraße; Dicke verdeckt Terrain-Lücken; Nachladen des Terrains lässt nichts schweben |
-| 3 | **Persistenz + Mini-Editor** | Datenmodell + `RoadStore` (Memory/HTTP), Punkte verschieben, Profil-Code live editieren, Params-UI, 2D-Querschnitt, Undo/Redo, Revisionen |
+| 3 | **Persistenz + Mini-Editor** ✅ | Datenmodell + `RoadStore` (Memory/HTTP), Punkte verschieben, Profil-Code live editieren, Params-UI, 2D-Querschnitt, Undo/Redo, Revisionen |
 | 4 | **Netzwerk + Kreuzungen** | Graph, Y/T/X-Kreuzungen, Profilübergänge, Sackgasse |
 | 5 | **Oberflächen & Markierungen** | Material-Registry + prozedurale Materialien (austauschbar), Verschleiß-Layer, Markierungen, alle Basis-Presets (Wanderweg → Autobahn) |
 | 6 | **Props** | Scatter-System, Leitplanken (+Auto-Regel), Laternen, Schilder (SSV), Vortrittsschilder automatisch |

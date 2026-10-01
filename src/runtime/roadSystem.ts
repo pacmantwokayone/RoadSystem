@@ -19,6 +19,7 @@ export const DEFAULT_BUDGET: ResyncBudget = { checks: 256, builds: 4 };
 
 export type ChunkListener = (road: RoadRuntime, chunk: RoadChunk) => void;
 export type RemovedListener = (road: RoadRuntime) => void;
+export type ReplacedListener = (previous: RoadRuntime, next: RoadRuntime) => void;
 export type ProfileResolver = (def: RoadDef) => ProfileData;
 
 export class RoadSystem {
@@ -27,6 +28,7 @@ export class RoadSystem {
   private cursor = 0;
   private chunkListeners = new Set<ChunkListener>();
   private removedListeners = new Set<RemovedListener>();
+  private replacedListeners = new Set<ReplacedListener>();
 
   constructor(
     private readonly terrain: TerrainSource,
@@ -47,10 +49,19 @@ export class RoadSystem {
     for (const def of defs) this.add(def);
   }
 
-  /** Add a road or replace the one with the same id (rebuilds only that road). */
+  /** Add a road or replace the one with the same id (rebuilds only that road).
+   * A replacement is announced via onRoadReplaced so views can keep showing the old
+   * version until the new one is built (no flicker while editing). */
   upsertRoad(def: RoadDef): void {
-    this.removeRoad(def.id);
-    this.add(def);
+    const idx = this.roads.findIndex((r) => r.def.id === def.id);
+    if (idx < 0) { this.add(def); return; }
+    const old = this.roads[idx];
+    this.roads.splice(idx, 1);
+    this.pending = this.pending.filter((e) => e.road !== old);
+    this.cursor = 0;
+    const next = this.add(def);
+    if (next) for (const cb of this.replacedListeners) cb(old, next);
+    else this.emitRemoved(old);
   }
 
   removeRoad(id: string): void {
@@ -64,14 +75,20 @@ export class RoadSystem {
 
   /** Re-evaluate all roads (e.g. after a profile was edited). */
   rebuildAll(): void {
-    this.setRoads(this.roads.map((r) => r.def));
+    for (const r of [...this.roads]) this.upsertRoad(r.def);
   }
 
-  private add(def: RoadDef): void {
-    if (def.points.length < 2) return;
+  /** Re-evaluate the roads using a profile (after its code changed). */
+  rebuildProfile(name: string): void {
+    for (const r of [...this.roads]) if (r.def.profile === name) this.upsertRoad(r.def);
+  }
+
+  private add(def: RoadDef): RoadRuntime | undefined {
+    if (def.points.length < 2) return undefined;
     const rt = new RoadRuntime(def, this.terrain, this.resolveProfile(def), this.opts);
     this.roads.push(rt);
     for (const chunk of rt.chunks) this.pending.push({ road: rt, chunk });
+    return rt;
   }
 
   private emitRemoved(r: RoadRuntime): void {
@@ -87,6 +104,11 @@ export class RoadSystem {
   onRoadRemoved(cb: RemovedListener): () => void {
     this.removedListeners.add(cb);
     return () => this.removedListeners.delete(cb);
+  }
+
+  onRoadReplaced(cb: ReplacedListener): () => void {
+    this.replacedListeners.add(cb);
+    return () => this.replacedListeners.delete(cb);
   }
 
   stats(): { chunks: number; ready: number } {

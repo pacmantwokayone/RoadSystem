@@ -5,7 +5,10 @@ import { fileURLToPath } from 'node:url';
 export default defineConfig({
   root: 'demo',
   resolve: {
-    alias: { roadsystem: fileURLToPath(new URL('./src/index.ts', import.meta.url)) },
+    alias: [
+      { find: 'roadsystem/editor', replacement: fileURLToPath(new URL('./src/editor/index.ts', import.meta.url)) },
+      { find: 'roadsystem', replacement: fileURLToPath(new URL('./src/index.ts', import.meta.url)) },
+    ],
   },
   build: { outDir: '../dist-demo', emptyOutDir: true },
 });

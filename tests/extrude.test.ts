@@ -168,3 +168,30 @@ describe('extrusion', () => {
     expect(widths.size).toBeGreaterThan(3);
   });
 });
+
+describe('RoadMeshLayer replacement (no flicker while editing)', () => {
+  it('keeps the old version visible until the replacement is fully built, then drops it', async () => {
+    const { RoadSystem } = await import('../src/runtime/roadSystem');
+    const { RoadMeshLayer } = await import('../src/mesh/roadMeshLayer');
+    const { MaterialRegistry } = await import('../src/surface/materials');
+    const terrain = settled();
+    const sys = new RoadSystem(terrain, (d) => lib.resolve(d.profile, d.params));
+    const layer = new RoadMeshLayer(sys, new MaterialRegistry());
+    const a = def('hauptstrasse', line);
+    sys.setRoads([a]);
+    while (sys.stats().ready < sys.stats().chunks) sys.resync({ checks: 999, builds: 99 });
+    const n = layer.meshCount;
+    expect(n).toBeGreaterThan(3);
+
+    sys.upsertRoad({ ...a, points: a.points.map((p, i) => (i === 2 ? { ...p, x: p.x + 20 } : p)) });
+    expect(layer.meshCount).toBe(n); // old meshes still there, nothing built yet
+    sys.resync({ checks: 999, builds: 2 });
+    expect(layer.meshCount).toBeGreaterThan(n); // partially built: old + some new
+    while (sys.stats().ready < sys.stats().chunks) sys.resync({ checks: 999, builds: 99 });
+    expect(layer.meshCount).toBe(sys.stats().chunks); // old version disposed
+
+    sys.removeRoad('x');
+    expect(layer.meshCount).toBe(0);
+    layer.dispose();
+  });
+});

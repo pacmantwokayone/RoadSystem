@@ -114,6 +114,12 @@ export class RoadRuntime {
     if (this.chunks.length === 0 && n >= 2) this.chunks.push({ index: 0, i0: 0, i1: n - 1, state: 'pending' });
   }
 
+  /** Design height at authored point k (falls back to its authored y until the chunk is built). */
+  pointDesignY(k: number): number {
+    const y = this.designY[this.sampled.pointSample[k]];
+    return Number.isNaN(y) ? this.def.points[k].y : y;
+  }
+
   get pendingCount(): number {
     let c = 0;
     for (const ch of this.chunks) if (ch.state === 'pending') c++;

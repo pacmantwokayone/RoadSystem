@@ -47,6 +47,8 @@ export interface SampledRoad {
   def: RoadDef;
   curve: PathCurve;
   samples: RoadSample[];
+  /** index of the sample that sits exactly on authored point k */
+  pointSample: number[];
 }
 
 const smooth = (t: number): number => t * t * (3 - 2 * t);
@@ -113,5 +115,10 @@ export function sampleRoad(def: RoadDef, opts: SampleOptions = DEFAULT_SAMPLE_OP
       fixedWeight: mode !== 'road' ? 1 : fa * (1 - w) + fb * w,
     };
   });
-  return { def, curve, samples };
+  const pointSample = curve.pointS.map((ps) => {
+    let best = 0;
+    for (let i = 0; i < samples.length; i++) if (Math.abs(samples[i].s - ps) < Math.abs(samples[best].s - ps)) best = i;
+    return best;
+  });
+  return { def, curve, samples, pointSample };
 }
