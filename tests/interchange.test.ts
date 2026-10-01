@@ -99,7 +99,7 @@ describe('stack interchange', () => {
         const sim = { x: P.x, z: -P.z };
         // distance of the pier to A's centre line (A runs along x at z = 3000)
         const onA = Math.abs(sim.z - 3000) < halfA && sim.x > 2100 && sim.x < 3900;
-        const underDeck = rtB.groundAtThree(P.x, P.z) < P.y - 5;
+        const underDeck = (rtB.groundAtThree(P.x, P.z) ?? 0) < P.y - 5;
         if (underDeck) expect(onA, `pier at s=${s}`).toBe(false);
       }
       if (piers.length !== plain.length || piers.some((s, i) => s !== plain[i])) moved++;
