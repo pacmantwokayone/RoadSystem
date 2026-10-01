@@ -11,6 +11,7 @@ import * as THREE from 'three';
 import type { RoadSystem } from '../runtime/roadSystem';
 import type { ProfileLibrary } from '../profile/library';
 import type { MaterialRegistry } from '../surface/materials';
+import { DEFAULT_MATERIAL_SOURCES, type MaterialLibrary } from '../surface/materialLibrary';
 import type { RoadStore } from '../store/types';
 import { cloneRoad } from '../network/doc';
 import { isFixedPoint, type NodeDef, type RoadDef, type RoadPoint } from '../network/types';
@@ -37,6 +38,8 @@ export interface EditorDeps {
   system: RoadSystem;
   library: ProfileLibrary;
   materials: MaterialRegistry;
+  /** code-based materials (editable in the editor); when given, `materials` is bound to it */
+  materialLibrary?: MaterialLibrary;
   store: RoadStore;
   location: string;
   /** road meshes (RoadMeshLayer.group): lets clicks hit the road surface, not just the terrain behind it */
@@ -74,6 +77,8 @@ export class RoadEditor {
   private readonly location: string;
   private readonly confirmFn: (m: string) => boolean;
   private readonly roadGroup: THREE.Object3D | undefined;
+  readonly materialLibrary: MaterialLibrary | undefined;
+  readonly materials: MaterialRegistry;
   private listeners = new Set<() => void>();
   private draft: RoadDef | null = null;
   private libraryRevision: number | undefined;
@@ -105,7 +110,12 @@ export class RoadEditor {
     };
     this.handles.name = 'road-editor-handles';
     this.host.scene.add(this.handles);
-    void deps.materials;
+    this.materials = deps.materials;
+    this.materialLibrary = deps.materialLibrary;
+    if (this.materialLibrary) {
+      this.cleanups.push(deps.materials.bind(this.materialLibrary));
+      this.cleanups.push(this.materialLibrary.onChange(() => this.emit()));
+    }
 
     this.cleanups.push(this.model.onChange((e) => this.onModel(e)));
     this.cleanups.push(this.library.onChange((name) => {
@@ -167,6 +177,7 @@ export class RoadEditor {
     const lib = await this.store.loadLibrary();
     if (lib) {
       for (const [name, src] of Object.entries(lib.profiles)) this.library.setSource(name, src);
+      for (const [name, src] of Object.entries(lib.materials ?? {})) this.materialLibrary?.setSource(name, src);
       this.libraryRevision = lib.revision;
     }
     const doc = await this.store.loadRoads(this.location);
@@ -180,7 +191,7 @@ export class RoadEditor {
     let ok = true;
     if (this.state.libraryDirty) {
       ok = await this.saveWithConflict(
-        (base) => this.store.saveLibrary({ version: 1, profiles: this.library.allSources() }, base),
+        (base) => this.store.saveLibrary({ version: 1, profiles: this.library.allSources(), ...(this.materialLibrary ? { materials: this.materialLibrary.allSources() } : {}) }, base),
         this.libraryRevision, 'Profile',
         (rev) => { this.libraryRevision = rev; this.state.libraryDirty = false; },
       );
@@ -359,6 +370,29 @@ export class RoadEditor {
     const r = this.library.setSource(name, source);
     if (r.ok) { this.state.libraryDirty = true; this.emit(); }
     return r;
+  }
+
+  // ---- material code (live) --------------------------------------------------
+
+  /** Compile and activate material code. On error the previous version stays active. */
+  applyMaterialSource(name: string, source: string): { ok: boolean; error?: string } {
+    if (!this.materialLibrary) return { ok: false, error: 'no material library' };
+    const r = this.materialLibrary.setSource(name, source);
+    if (r.ok) { this.state.libraryDirty = true; this.emit(); }
+    return r;
+  }
+
+  resetMaterialToDefault(name: string): boolean {
+    const src = DEFAULT_MATERIAL_SOURCES[name];
+    return !!src && this.applyMaterialSource(name, src).ok;
+  }
+
+  duplicateMaterial(from: string, newName: string): { ok: boolean; error?: string } {
+    const src = this.materialLibrary?.getSource(from);
+    if (src === undefined) return { ok: false, error: `Material '${from}' nicht gefunden` };
+    if (!/^[a-z][a-z0-9_-]*$/i.test(newName)) return { ok: false, error: 'Name: Buchstaben, Ziffern, _ oder -; muss mit Buchstaben beginnen' };
+    if (this.materialLibrary!.has(newName)) return { ok: false, error: `Material '${newName}' existiert bereits` };
+    return this.applyMaterialSource(newName, src);
   }
 
   /** New profile as a copy of `from`. Returns its name. */

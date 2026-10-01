@@ -262,9 +262,38 @@ ein Ziel ziehen verbindet. Knoten-Marker ziehen verschiebt alle Arme. Inspector:
   unruhigem Gelände kann das einen leichten Höhenversatz erzeugen. Verbesserung: Knotenhöhe als gemeinsamer
   Anker (mit Phase 10 / Terrain-Modifier).
 - Der Patch deckt nur die **Fahrbahn** (Core-Breite); Bankett/Graben/Gehweg enden an den Armenden (Gehweg-Ecken,
-  Bordstein und Markierungen kommen mit Phase 5).
+  Bordstein und Markierungen im Patch kommen mit Phase 7).
 - Patch-Material = Hauptfahrstreifen der breitesten Straße; Unterseite des Patches fehlt (nur von unten sichtbar).
 - Kreisel, Auf-/Abfahrten, Unterführungen: Phase 11.
+
+---
+
+## 2f. Umsetzungsnotizen Phase 5 (Oberflächen & Markierungen)
+
+**Material-Shader.** Materialien bleiben `MeshLambertMaterial` (wie das Spielterrain, gleiche Beleuchtung); ein
+`onBeforeCompile`-Einschub (`src/surface/surfaceShader.ts`) liefert die prozedurale Optik: Meter-basierte UVs,
+`aStrip`-Attribut (Streifenindex quer zur Fahrbahn), Verschleiß-Layer (Spurrillen, Risse, Flicken, Randschmutz).
+Wetter (`wet`/`snow`/`age`) sind **gemeinsame Uniforms** für alle Straßenmaterialien. Echte Texturen: `def.map`
+bzw. `M.texture(url)` ersetzt die prozedurale Farbe.
+
+**Materialien als Code.** `MaterialLibrary` (analog `ProfileLibrary`): `export default (M) => M.asphalt({...})`,
+Hot-Reload mit letzter funktionierender Version bei Fehlern; Material-Tab im Editor; `roadlib-save.php` trägt
+`materials` mit (nur Editor-Rechte schreiben – Material-Code ist ausführbar).
+
+**Markierungen.** `MarkingDef` im Profil (`edgeLine`, `mark`, `markCenter`; solid/dashed/double/dashed-solid,
+weiß/gelb). Als leicht angehobene Bänder (3 cm, geometrisch – Polygon-Offset wirkt bei Log-Depth nicht) mit
+Strichphase aus der absoluten Bogenlänge, damit Chunk-Nähte nahtlos bleiben.
+
+**Presets.** 19 Presets von Wanderweg bis Autobahn (Mittelleitplanke, Spuren, Standstreifen). Regressionstest:
+alle Presets auf flachem Terrain nie unter/koplanar zum Terrain (`clearanceM` 0.15, kronenbewusste Hüllkurve).
+
+**Backend.** `roads-lib.php` wiederholt bei transienten DB-Sperren (SQLite „locked", MySQL 1205/1213) – parallele
+Speicherungen enden sauber in 409 statt in einem Fehler.
+
+**Bekannte Grenzen:**
+- Kreuzungs-Patch hat noch keine Markierungen, Haltelinien, Bordsteine oder Gehweg-Ecken (Phase 7).
+- Markierungsmaße sind Annäherungen an die Schweizer Norm (VSS), keine exakten Werte.
+- Nur Lambert-Optik (kein PBR); Nässe/Schnee sind Shader-Näherungen.
 
 ---
 
@@ -493,7 +522,7 @@ Jede Phase endet mit etwas **Sichtbarem und Lauffähigem** in der Demo (gegen da
 | 2 | **Profil + Extrusion (MVP)** ✅ | Straße per Klick aufs Terrain zeichnen (`drape` auf gesettelte Höhe, `y` als Fallback); Presets Flurstraße & Hauptstraße; Dicke verdeckt Terrain-Lücken; Nachladen des Terrains lässt nichts schweben |
 | 3 | **Persistenz + Mini-Editor** ✅ | Datenmodell + `RoadStore` (Memory/HTTP), Punkte verschieben, Profil-Code live editieren, Params-UI, 2D-Querschnitt, Undo/Redo, Revisionen |
 | 4 | **Netzwerk + Kreuzungen** ✅ | Graph, Y/T/X-Kreuzungen, Profilübergänge, Sackgasse |
-| 5 | **Oberflächen & Markierungen** | Material-Registry + prozedurale Materialien (austauschbar), Verschleiß-Layer, Markierungen, alle Basis-Presets (Wanderweg → Autobahn) |
+| 5 | **Oberflächen & Markierungen** ✅ | Material-Registry + prozedurale Materialien (austauschbar), Verschleiß-Layer, Markierungen, alle Basis-Presets (Wanderweg → Autobahn) |
 | 6 | **Props** | Scatter-System, Leitplanken (+Auto-Regel), Laternen, Schilder (SSV), Vortrittsschilder automatisch |
 | 7 | **Ampeln** | Signalgruppen, automatischer Phasenplan, Fußgängerstreifen, Haltelinien |
 | 8 | **Brücken** | Balken/Bogen/Viadukt, Pfeiler bis Terrain, Widerlager, Geländer, Flusskreuzungs-Vorschlag |

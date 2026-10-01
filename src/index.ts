@@ -26,3 +26,6 @@ export * from './network/graph';
 export * from './network/junction';
 export * from './runtime/junctionRuntime';
 export * from './mesh/junctionMesh';
+export * from './surface/surfaceShader';
+export * from './surface/materialLibrary';
+export * from './mesh/markings';

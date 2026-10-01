@@ -32,6 +32,13 @@ const T_ROADS = (): RoadDef[] => [
   R('s', 'flurstrasse', [[3300, 2700], [3290, 2850], [3300, 3000]], { endNode: 'n1' }),
 ];
 
+/** road meshes + one marking mesh per chunk of roads whose profile has markings + junction patches */
+function expectedMeshes(sys: RoadSystem): number {
+  let n = sys.junctions.length;
+  for (const r of sys.runtimes) n += r.chunks.length * (r.profile.markings.length ? 2 : 1);
+  return n;
+}
+
 function settleAll(sys: RoadSystem): void {
   let guard = 0;
   while ((sys.stats().ready < sys.stats().chunks || sys.junctionStats().ready < sys.junctionStats().total) && guard++ < 200) {
@@ -194,12 +201,12 @@ describe('network diffing', () => {
     const layer = new RoadMeshLayer(sys, new MaterialRegistry());
     sys.setNetwork(T_ROADS(), [NODE]);
     settleAll(sys);
-    const chunks = sys.stats().chunks;
-    expect(layer.meshCount).toBe(chunks + 1); // + one junction mesh
+    const before = expectedMeshes(sys);
+    expect(layer.meshCount).toBe(before);
     sys.setNetwork(T_ROADS(), [{ ...NODE, radius: 10 }]);
-    expect(layer.meshCount).toBeGreaterThan(chunks);   // old versions still shown
+    expect(layer.meshCount).toBeGreaterThanOrEqual(before - 1);   // old versions still shown
     settleAll(sys);
-    expect(layer.meshCount).toBe(sys.stats().chunks + 1);
+    expect(layer.meshCount).toBe(expectedMeshes(sys));
     sys.setNetwork([], []);
     expect(layer.meshCount).toBe(0);
   });

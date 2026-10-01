@@ -26,7 +26,17 @@ const METHODS: Completion[] = [
   { label: 'lerp', type: 'function', detail: '(a, b, t)' },
 ];
 
+const MATERIAL_METHODS: Completion[] = [
+  ...['asphalt', 'gravel', 'dirt', 'grass', 'cobble', 'concrete', 'wood', 'stone', 'paint', 'flat'].map((k): Completion => ({ label: k, type: 'function', detail: '({ … })', info: `Surface kind '${k}'` })),
+  { label: 'mix', type: 'function', detail: '(a, b, t)', info: 'Blend two colours' },
+  { label: 'shade', type: 'function', detail: '(hex, factor)', info: 'Brighten / darken a colour' },
+  { label: 'rgb', type: 'function', detail: '(r, g, b)', info: 'Colour from 0–255 components' },
+  { label: 'texture', type: 'function', detail: '(url)', info: 'Use a real texture instead of the procedural base' },
+];
+
 export interface CodeEditorOptions {
+  /** which API to complete: profile code (`R`/builder) or material code (`M`) */
+  api?: 'profile' | 'material';
   doc: string;
   materialNames: () => string[];
   onChange: (source: string) => void;
@@ -52,7 +62,7 @@ export function createCodeEditor(parent: HTMLElement, opts: CodeEditorOptions): 
       return { from: ctx.pos - str[2].length, options: opts.materialNames().map((label) => ({ label, type: 'constant' })), validFor: /^\w*$/ };
     }
     const dot = /\.(\w*)$/.exec(before);
-    if (dot) return { from: ctx.pos - dot[1].length, options: METHODS, validFor: /^\w*$/ };
+    if (dot) return { from: ctx.pos - dot[1].length, options: opts.api === 'material' ? MATERIAL_METHODS : METHODS, validFor: /^\w*$/ };
     return null;
   };
 

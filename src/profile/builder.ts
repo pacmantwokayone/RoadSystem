@@ -9,7 +9,7 @@
 //       .surface(0.8, 'asphalt_worn', { kind: 'shoulder', slope: -0.04 })
 //       .ditch(1.4, 0.35, 'grass'))
 
-import type { ProfileData, ProfilePoint, ProfileSegment, VaryContext, VaryResult } from './types';
+import type { MarkingDef, ProfileData, ProfilePoint, ProfileSegment, VaryContext, VaryResult } from './types';
 
 export interface SurfaceOpts {
   /** rise over run going OUTWARD (negative = falls away from the centre) */
@@ -18,9 +18,20 @@ export interface SurfaceOpts {
   id?: string;
   /** counts as carriageway footprint; default true except verge/ditch/slope helpers */
   core?: boolean;
+  /** centre strip only: raise it above the carriageway (median, kerbed island) */
+  y?: number;
 }
 
+export type MarkOpts = Partial<Omit<MarkingDef, 'x'>>;
+
+export const MARKING_DEFAULTS: Omit<MarkingDef, 'x'> = {
+  width: 0.12, style: 'solid', color: 'white', dash: 3, gap: 9, spacing: 0.25, dashedSide: 'right',
+};
+
+const markingOf = (x: number, o: MarkOpts): MarkingDef => ({ ...MARKING_DEFAULTS, ...o, x });
+
 type Element =
+  | { type: 'mark'; back: number; opts: MarkOpts }
   | { type: 'surface'; width: number; dy: number; material: string; kind: string; id?: string; core: boolean }
   | { type: 'step'; dy: number; material: string; kind: string; id?: string; core: boolean };
 
@@ -58,6 +69,13 @@ export class HalfBuilder {
     return this;
   }
 
+  /** Painted edge line `back` metres inside the outer edge of the last strip (default 0.2). */
+  edgeLine(opts: MarkOpts & { back?: number } = {}): this {
+    const { back = 0.2, ...rest } = opts;
+    this.elements.push({ type: 'mark', back, opts: rest });
+    return this;
+  }
+
   /** V-shaped ditch: falls `depth` over the first half of `width`, rises again over the second. */
   ditch(width: number, depth: number, material: string, opts: SurfaceOpts = {}): this {
     checkWidth(width, 'ditch');
@@ -70,6 +88,8 @@ export class HalfBuilder {
 
 export interface CentreSpec {
   width: number;
+  /** height of the centre strip relative to the carriageway (a raised median) */
+  y: number;
   material: string;
   kind: string;
   id?: string;
@@ -84,6 +104,7 @@ export class ProfileBuilder {
   private _right: Element[] = [];
   private _left: Element[] = [];
   private _vary: ((ctx: VaryContext) => VaryResult) | undefined;
+  private _marks: MarkingDef[] = [];
 
   constructor(readonly name: string) {}
 
@@ -94,7 +115,7 @@ export class ProfileBuilder {
   /** Strip centred on the axis (path, median, …). */
   center(width: number, material: string, opts: SurfaceOpts = {}): this {
     checkWidth(width, 'center');
-    this._centre = { width, material, kind: opts.kind ?? 'lane', id: opts.id, core: opts.core ?? true };
+    this._centre = { width, y: opts.y ?? 0, material, kind: opts.kind ?? 'lane', id: opts.id, core: opts.core ?? true };
     return this;
   }
 
@@ -121,6 +142,18 @@ export class ProfileBuilder {
     return this;
   }
 
+  /** Painted line at an absolute lateral position (profile space, + = right). */
+  mark(x: number, opts: MarkOpts = {}): this {
+    this._marks.push(markingOf(x, opts));
+    return this;
+  }
+
+  /** Centre line (default: white dashed). */
+  markCenter(opts: MarkOpts = {}): this {
+    this._marks.push(markingOf(0, { style: 'dashed', ...opts }));
+    return this;
+  }
+
   /** Per-sample variation along the road (path wobble, width noise, …). */
   vary(fn: (ctx: VaryContext) => VaryResult): this {
     this._vary = fn;
@@ -129,12 +162,19 @@ export class ProfileBuilder {
 
   finish(): ProfileData {
     const bh = this._centre ? this._centre.width / 2 : 0;
+    const marks: MarkingDef[] = [...this._marks];
+    const baseY = this._centre?.y ?? 0;
     const walk = (els: Element[], sign: 1 | -1): { pts: ProfilePoint[]; segs: ProfileSegment[] } => {
-      const pts: ProfilePoint[] = [{ x: sign * bh + 0, y: 0 }]; // `+ 0` turns -0 into 0
+      const pts: ProfilePoint[] = [{ x: sign * bh + 0, y: baseY }]; // `+ 0` turns -0 into 0
       const segs: ProfileSegment[] = [];
       let x = bh;
-      let y = 0;
+      let y = baseY;
       for (const e of els) {
+        if (e.type === 'mark') {
+          const side = e.opts.dashedSide ?? MARKING_DEFAULTS.dashedSide;
+          marks.push(markingOf(sign * (x - e.back) + 0, { ...e.opts, dashedSide: sign === 1 ? side : side === 'left' ? 'right' : 'left' }));
+          continue;
+        }
         if (e.type === 'surface') { x += e.width; y += e.dy; } else { y += e.dy; }
         pts.push({ x: sign * x + 0, y });
         segs.push({ material: e.material, kind: e.kind, id: e.id, core: e.core });
@@ -171,6 +211,7 @@ export class ProfileBuilder {
       segments,
       thickness: this._thickness,
       bodyMaterial: this._body,
+      markings: marks,
       smoothRadiusM: this._smooth,
       coreHalfWidth: core,
       outerHalfWidth: outer,

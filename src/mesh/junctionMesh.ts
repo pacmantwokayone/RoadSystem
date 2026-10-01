@@ -133,6 +133,7 @@ export function buildJunctionGeometry(patch: JunctionPatch, opts: JunctionMeshOp
   geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geometry.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
   geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geometry.setAttribute('aStrip', new THREE.BufferAttribute(new Float32Array(total * 3), 3)); // no strips on a patch: no wheel tracks
   geometry.setIndex(new THREE.BufferAttribute(index, 1));
   geometry.addGroup(0, idxTop.length, 0);
   if (idxWall.length) geometry.addGroup(idxTop.length, idxWall.length, 1);

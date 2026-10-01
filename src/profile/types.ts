@@ -17,6 +17,25 @@ export interface ProfileSegment {
   core: boolean;
 }
 
+export type MarkingStyle = 'solid' | 'dashed' | 'double' | 'dashed-solid';
+export type MarkingColor = 'white' | 'yellow';
+
+/** A painted line along the road. `x` is the lateral position in profile space (+ = right). */
+export interface MarkingDef {
+  x: number;
+  /** paint width, metres */
+  width: number;
+  style: MarkingStyle;
+  color: MarkingColor;
+  /** dash and gap length for dashed lines, metres */
+  dash: number;
+  gap: number;
+  /** distance between the two lines of a double marking (centre to centre), metres */
+  spacing: number;
+  /** which line of a 'dashed-solid' pair is the dashed one */
+  dashedSide: 'left' | 'right';
+}
+
 export interface VaryContext {
   /** arc length along the road, metres */
   s: number;
@@ -39,6 +58,8 @@ export interface ProfileData {
   /** minimum depth of the body below the top surface, metres */
   thickness: number;
   bodyMaterial: string;
+  /** painted lines (centre line, edge lines, …) */
+  markings: MarkingDef[];
   /** terrain-following smoothing radius for this profile, metres */
   smoothRadiusM?: number;
   /** half width of the carriageway footprint (segments with core = true) */

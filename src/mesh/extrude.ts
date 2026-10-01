@@ -14,6 +14,7 @@
 import * as THREE from 'three';
 import type { RoadChunk, RoadRuntime } from '../runtime/roadRuntime';
 import { LAT } from '../runtime/roadRuntime';
+import { profileHeightAt } from '../profile/types';
 
 export interface ExtrudeOptions {
   /** how far below the terrain beside the road the side walls reach, metres */
@@ -29,6 +30,50 @@ export const DEFAULT_EXTRUDE_OPTIONS: ExtrudeOptions = {
   maxWallDepthM: 30,
   innerCurveLimit: 0.85,
 };
+
+/** How a profile is placed on the road at one sample: shared by the extrusion and the markings so both agree exactly. */
+export interface RingSection {
+  centre: THREE.Vector3;
+  frame: ReturnType<RoadRuntime['designFrame']>;
+  /** profile x → lateral position in metres (width scale, `vary`, inside-of-turn clamp) */
+  mapX(xProfile: number): number;
+  /** world position of the top surface at profile x */
+  surface(xProfile: number, out?: THREE.Vector3): THREE.Vector3;
+  /** world position at a lateral distance (metres, + = right) and height above the design line */
+  at(lateral: number, y: number, out?: THREE.Vector3): THREE.Vector3;
+}
+
+export function ringSection(rt: RoadRuntime, i: number, innerCurveLimit = DEFAULT_EXTRUDE_OPTIONS.innerCurveLimit): RingSection {
+  const profile = rt.profile;
+  const sample = rt.samples[i];
+  const frame = rt.designFrame(i);
+  const cy = rt.designY[i];
+  const vary = profile.vary?.({ s: sample.s, seed: rt.seed });
+  const wMul = sample.widthScale * (vary?.widthMul ?? 1);
+  const offX = vary?.offsetX ?? 0;
+  const k = sample.curvature;
+  const limit = Math.abs(k) > 1e-6 ? innerCurveLimit / Math.abs(k) : Infinity;
+  const mapX = (xp: number): number => {
+    let x = xp * wMul;
+    const inner = (k > 0 && x < 0) || (k < 0 && x > 0);
+    if (inner && Math.abs(x) > limit) x = Math.sign(x) * limit;
+    return x + offX;
+  };
+  const centre = new THREE.Vector3(sample.pos.x, cy, sample.pos.z);
+  return {
+    centre, frame, mapX,
+    surface(xp, out = new THREE.Vector3()) {
+      return this.at(mapX(xp), profileHeightAt(profile, xp), out);
+    },
+    at(x, y, out = new THREE.Vector3()) {
+      return out.set(
+        centre.x + frame.right.x * x + frame.up.x * y,
+        centre.y + frame.right.y * x + frame.up.y * y,
+        centre.z + frame.right.z * x + frame.up.z * y,
+      );
+    },
+  };
+}
 
 export interface ChunkGeometry {
   geometry: THREE.BufferGeometry;
@@ -55,6 +100,7 @@ export function buildChunkGeometry(
   const pos = new Float32Array((total + capVerts) * 3);
   const nrm = new Float32Array((total + capVerts) * 3);
   const uv = new Float32Array((total + capVerts) * 2);
+  const strip = new Float32Array((total + capVerts) * 3); // aStrip: (lateral from strip centre, strip half width, 0) — zero on walls / caps
 
   const tp = new Array<THREE.Vector3>(M); // top points of the current ring, world space
   for (let m = 0; m < M; m++) tp[m] = new THREE.Vector3();
@@ -114,6 +160,9 @@ export function buildChunkGeometry(
       ).normalize();
       putV(base + seg * 2, tp[seg], tmpN, us[seg], sample.s);
       putV(base + seg * 2 + 1, tp[seg + 1], tmpN, us[seg + 1], sample.s);
+      const hw = Math.abs(dx) / 2; // vertical faces (kerbs) have none → no wheel tracks / edge dirt
+      strip[(base + seg * 2) * 3] = -hw; strip[(base + seg * 2) * 3 + 1] = hw;
+      strip[(base + seg * 2 + 1) * 3] = hw; strip[(base + seg * 2 + 1) * 3 + 1] = hw;
     }
 
     // side walls + bottom
@@ -204,6 +253,7 @@ export function buildChunkGeometry(
   geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geometry.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
   geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geometry.setAttribute('aStrip', new THREE.BufferAttribute(strip, 3));
   geometry.setIndex(new THREE.BufferAttribute(index, 1));
   let offset = 0;
   materials.forEach((name, mi) => {

@@ -1,7 +1,7 @@
 // 2-D cross-section preview of a profile (the thing you see while editing its code).
 // `computeProfileView` is pure (testable); `drawProfile` paints it on a canvas.
 
-import type { ProfileData } from '../profile/types';
+import { profileHeightAt as profileHeightAtPreview, type ProfileData } from '../profile/types';
 
 export interface ProfileView {
   /** pixels per metre */
@@ -81,6 +81,15 @@ export function drawProfile(
     ctx.lineTo(X(pts[k + 1].x), Y(pts[k + 1].y));
     ctx.stroke();
   });
+
+  // painted lines: short ticks just above the surface (dashed styles drawn dotted)
+  for (const m of profile.markings) {
+    const y = profileHeightAtPreview(profile, m.x);
+    ctx.fillStyle = m.color === 'yellow' ? '#e8c424' : '#f2f2ee';
+    const w = Math.max(2, m.width * v.scale);
+    const draw = (x: number): void => ctx.fillRect(X(x) - w / 2, Y(y) - 5, w, 4);
+    if (m.style === 'double') { draw(m.x - m.spacing / 2); draw(m.x + m.spacing / 2); } else draw(m.x);
+  }
 
   // points
   ctx.fillStyle = '#e8eef5';

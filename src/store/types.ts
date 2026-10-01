@@ -10,6 +10,8 @@ export interface LibraryDocument {
   revision?: number;
   /** profile name → source code */
   profiles: Record<string, string>;
+  /** material name → source code (optional: older documents have none) */
+  materials?: Record<string, string>;
 }
 
 export type SaveResult =
@@ -27,11 +29,16 @@ export interface RoadStore {
 
 export function sanitizeLibraryDocument(raw: unknown): LibraryDocument {
   const obj = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
-  const profiles: Record<string, string> = {};
-  if (typeof obj.profiles === 'object' && obj.profiles !== null) {
-    for (const [k, v] of Object.entries(obj.profiles)) if (typeof v === 'string' && k) profiles[k] = v;
-  }
-  const doc: LibraryDocument = { version: 1, profiles };
+  const strings = (raw: unknown): Record<string, string> => {
+    const out: Record<string, string> = {};
+    if (typeof raw === 'object' && raw !== null) {
+      for (const [k, v] of Object.entries(raw)) if (typeof v === 'string' && k) out[k] = v;
+    }
+    return out;
+  };
+  const doc: LibraryDocument = { version: 1, profiles: strings(obj.profiles) };
+  const materials = strings(obj.materials);
+  if (Object.keys(materials).length) doc.materials = materials;
   if (typeof obj.revision === 'number' && Number.isFinite(obj.revision)) doc.revision = Math.max(0, Math.floor(obj.revision));
   return doc;
 }

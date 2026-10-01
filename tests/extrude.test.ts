@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { Vector3 } from 'three';
 import { MockStreamTerrain } from '../src/terrain/mockStreamTerrain';
 import { RoadRuntime, DEFAULT_RUNTIME_OPTIONS } from '../src/runtime/roadRuntime';
-import { buildChunkGeometry } from '../src/mesh/extrude';
+import { buildChunkGeometry, ringSection } from '../src/mesh/extrude';
 import { ProfileLibrary } from '../src/profile/library';
 import type { RoadDef } from '../src/network/types';
 
@@ -182,16 +182,41 @@ describe('RoadMeshLayer replacement (no flicker while editing)', () => {
     while (sys.stats().ready < sys.stats().chunks) sys.resync({ checks: 999, builds: 99 });
     const n = layer.meshCount;
     expect(n).toBeGreaterThan(3);
+    const expectedNow = (): number => sys.runtimes.reduce((a, r) => a + r.chunks.length * (r.profile.markings.length ? 2 : 1), 0);
 
     sys.upsertRoad({ ...a, points: a.points.map((p, i) => (i === 2 ? { ...p, x: p.x + 20 } : p)) });
     expect(layer.meshCount).toBe(n); // old meshes still there, nothing built yet
     sys.resync({ checks: 999, builds: 2 });
     expect(layer.meshCount).toBeGreaterThan(n); // partially built: old + some new
     while (sys.stats().ready < sys.stats().chunks) sys.resync({ checks: 999, builds: 99 });
-    expect(layer.meshCount).toBe(sys.stats().chunks); // old version disposed
+    expect(layer.meshCount).toBe(expectedNow()); // old version disposed
 
     sys.removeRoad('x');
     expect(layer.meshCount).toBe(0);
     layer.dispose();
+  });
+});
+
+describe('clearance above the terrain (a road on flat ground must not vanish into it)', () => {
+  it('centre and both carriageway edges are at least the clearance above flat terrain, for every preset', () => {
+    const flat = new MockStreamTerrain({ heightFn: () => 800 });
+    flat.loadRectSync(0, 0, 6000, 6000, 4);
+    flat.loadRectSync(2800, 2800, 3800, 3400, 0);
+    const lib4 = new ProfileLibrary();
+    for (const name of lib4.names()) {
+      const prof = lib4.resolve(name);
+      const rt = new RoadRuntime(def(name, line), flat, prof, DEFAULT_RUNTIME_OPTIONS);
+      rt.chunks.forEach((c) => rt.tryBuildChunk(c));
+      for (const chunk of rt.chunks) {
+        for (let i = chunk.i0; i <= chunk.i1; i += 3) {
+          const sec = ringSection(rt, i);
+          for (const x of [-prof.coreHalfWidth, 0, prof.coreHalfWidth]) {
+            const p = sec.surface(x);
+            const ground = flat.heightAt(p.x, -p.z)!;
+            expect(p.y - ground, `${name} x=${x}`).toBeGreaterThanOrEqual(DEFAULT_RUNTIME_OPTIONS.clearanceM - 1e-6);
+          }
+        }
+      }
+    }
   });
 });

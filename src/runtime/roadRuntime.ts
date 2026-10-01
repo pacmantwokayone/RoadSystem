@@ -15,7 +15,7 @@ import { dependencyRadius, designHeightAt, windowRange } from '../core/alignment
 import { makeFrame, type Frame } from '../core/frames';
 import { sampleRoad, DEFAULT_SAMPLE_OPTIONS, NO_TRIM, type RoadSample, type SampledRoad, type SampleOptions, type Trim } from '../core/sampling';
 import { flipZ } from '../core/world';
-import type { ProfileData } from '../profile/types';
+import { profileHeightAt, type ProfileData } from '../profile/types';
 import type { End } from '../network/graph';
 
 export interface RoadRuntimeOptions {
@@ -24,12 +24,17 @@ export interface RoadRuntimeOptions {
   chunkLengthM: number;
   /** drape smoothing radius when the profile doesn't specify one, metres */
   smoothRadiusM: number;
+  /** minimum height of the road surface above the terrain mesh under the carriageway, metres.
+   * Without it a road on flat ground is coplanar with the terrain (and vanishes); mesh vs heightAt()
+   * differences (triangulation, LOD, meshStride) would otherwise bury it on rough ground. */
+  clearanceM: number;
 }
 
 export const DEFAULT_RUNTIME_OPTIONS: RoadRuntimeOptions = {
   sample: DEFAULT_SAMPLE_OPTIONS,
   chunkLengthM: 64,
   smoothRadiusM: 12,
+  clearanceM: 0.15,
 };
 
 export type ChunkState = 'pending' | 'ready';
@@ -73,6 +78,8 @@ export class RoadRuntime {
   private readonly rightHx: Float64Array;
   private readonly rightHz: Float64Array;
   private readonly window: Array<[number, number]>;
+  /** profile surface height (relative to the design line) at the carriageway edges and the centre */
+  private readonly surfY: { left: number; centre: number; right: number };
 
   constructor(
     def: RoadDef,
@@ -85,6 +92,11 @@ export class RoadRuntime {
     this.profile = profile;
     this.seed = hashString(def.id);
     this.smoothRadiusM = profile.smoothRadiusM ?? opts.smoothRadiusM;
+    this.surfY = {
+      left: profileHeightAt(profile, -profile.coreHalfWidth),
+      centre: profileHeightAt(profile, 0),
+      right: profileHeightAt(profile, profile.coreHalfWidth),
+    };
     this.sampled = sampleRoad(def, opts.sample, trim);
     this.samples = this.sampled.samples;
     const n = this.samples.length;
@@ -191,7 +203,12 @@ export class RoadRuntime {
     for (const k of [LAT.CORE_L, LAT.CENTRE, LAT.CORE_R]) {
       if (Number.isNaN(this.lat[k][j]) && !this.probe(j, k)) return false;
     }
-    this.ground[j] = Math.max(this.lat[LAT.CORE_L][j], this.lat[LAT.CENTRE][j], this.lat[LAT.CORE_R][j]);
+    // the surface must clear the terrain at the carriageway edges too, where the profile (crown) lies below the design line
+    this.ground[j] = Math.max(
+      this.lat[LAT.CORE_L][j] - this.surfY.left,
+      this.lat[LAT.CENTRE][j] - this.surfY.centre,
+      this.lat[LAT.CORE_R][j] - this.surfY.right,
+    );
     this.innerSettled[j] = 1;
     return true;
   }
@@ -232,7 +249,7 @@ export class RoadRuntime {
     const inp = { s: this.sArr, ground: this.ground, authored: this.authored, fixedWeight: this.fixedW };
     const [h0, h1] = this.heightRange(chunk);
     for (let i = h0; i <= h1; i++) {
-      this.designY[i] = designHeightAt(inp, i, this.smoothRadiusM, { dilate: true });
+      this.designY[i] = designHeightAt(inp, i, this.smoothRadiusM, { dilate: true }) + this.opts.clearanceM * (1 - this.fixedW[i]);
     }
     chunk.state = 'ready';
     return true;

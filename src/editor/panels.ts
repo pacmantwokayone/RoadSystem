@@ -38,21 +38,28 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
   // ---- tabs ----
   const tabRoads = h('button', { class: 'on' }, 'Straßen');
   const tabProfile = h('button', {}, 'Profil (Code)');
+  const tabMaterial = h('button', {}, 'Material');
   const roadsBody = h('div', { class: 'rse-body' });
   const profileBody = h('div', { class: 'rse-body profile', style: { display: 'none' } });
-  let activeTab: 'roads' | 'profile' = 'roads';
-  const showTab = (t: 'roads' | 'profile'): void => {
+  const materialBody = h('div', { class: 'rse-body profile', style: { display: 'none' } });
+  type Tab = 'roads' | 'profile' | 'material';
+  let activeTab: Tab = 'roads';
+  const showTab = (t: Tab): void => {
     activeTab = t;
     tabRoads.classList.toggle('on', t === 'roads');
     tabProfile.classList.toggle('on', t === 'profile');
+    tabMaterial.classList.toggle('on', t === 'material');
     roadsBody.style.display = t === 'roads' ? '' : 'none';
     profileBody.style.display = t === 'profile' ? '' : 'none';
+    materialBody.style.display = t === 'material' ? '' : 'none';
     if (t === 'profile') { followSelection(); requestAnimationFrame(redrawPreview); } // preview needs layout, the editor doesn't
+    if (t === 'material') renderMaterial(true);
   };
   tabRoads.onclick = () => showTab('roads');
   tabProfile.onclick = () => showTab('profile');
+  tabMaterial.onclick = () => showTab('material');
 
-  const dock = h('div', { class: 'rse' }, bar, h('div', { class: 'rse-tabs' }, tabRoads, tabProfile), roadsBody, profileBody);
+  const dock = h('div', { class: 'rse' }, bar, h('div', { class: 'rse-tabs' }, tabRoads, tabProfile, ...(editor.materialLibrary ? [tabMaterial] : [])), roadsBody, profileBody, materialBody);
   root.append(dock);
 
   // ================= roads tab =================
@@ -282,6 +289,62 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
     renderProfile(!code);
   }
 
+  // ================= material tab =================
+  const matLib = editor.materialLibrary;
+  let materialName = 'asphalt';
+  const matSel = h('select', { on: { change: () => { materialName = matSel.value; renderMaterial(true); } } });
+  const matSwatch = h('div', { class: 'rse-swatch' });
+  const matErr = h('div', { class: 'rse-err' });
+  const matCodeHost = h('div', { class: 'rse-code' });
+  let matCode: CodeEditorHandle | null = null;
+  const weatherRow = (label: string, key: 'wet' | 'snow' | 'age'): HTMLElement => {
+    const val = h('span', { class: 'rse-val' }, materials.weather[key].toFixed(2));
+    const input = h('input', { type: 'range', min: 0, max: 1, step: 0.01, value: String(materials.weather[key]),
+      on: { input: () => { const v = Number((input as HTMLInputElement).value); materials.setWeather({ [key]: v }); val.textContent = v.toFixed(2); } } }) as HTMLInputElement;
+    return h('div', { class: 'rse-row' }, h('span', {}, label), input, val);
+  };
+  const matActions = h('div', { class: 'rse-actions', style: 'margin:0' },
+    h('button', { title: 'Kopie unter neuem Namen anlegen', on: { click: () => {
+      const n = prompt('Name des neuen Materials:', `${materialName}_2`);
+      if (!n) return;
+      const r = editor.duplicateMaterial(materialName, n.trim());
+      if (!r.ok) { matErr.textContent = r.error ?? ''; return; }
+      materialName = n.trim(); renderMaterial(true);
+    } } }, 'Kopie …'),
+    h('button', { title: 'Standard-Code wiederherstellen', on: { click: () => { if (editor.resetMaterialToDefault(materialName)) renderMaterial(true); } } }, 'Standard zurücksetzen'),
+  );
+  materialBody.append(
+    h('div', { class: 'rse-row two', style: 'margin:0' }, h('span', {}, 'Material'), matSel),
+    matSwatch, matActions, matCodeHost, matErr,
+    h('div', { class: 'rse-h', style: 'margin:4px 0 0' }, 'Wetter (alle Straßen)'),
+    weatherRow('Nass', 'wet'), weatherRow('Schnee', 'snow'), weatherRow('Alter / Verschleiss', 'age'),
+    h('div', { class: 'rse-hint' }, 'Änderungen wirken sofort an allen Strassen, die dieses Material benutzen.'),
+  );
+
+  function renderMaterial(force = false): void {
+    if (!matLib || activeTab !== 'material') return;
+    const names = matLib.names();
+    if (force || matSel.options.length !== names.length) matSel.replaceChildren(...names.map((n) => h('option', { value: n }, n)));
+    if (!names.includes(materialName)) materialName = names[0];
+    matSel.value = materialName;
+    const def = matLib.getDef(materialName);
+    if (def) matSwatch.textContent = `${def.kind} · ${hex(def.color)} · Kachel ${def.tileM} m`;
+    if (def) matSwatch.style.borderLeftColor = hex(def.color);
+    const src = matLib.getSource(materialName) ?? '';
+    if (!matCode) {
+      matCode = createCodeEditor(matCodeHost, {
+        api: 'material', doc: src, materialNames: () => [],
+        onChange: (s) => {
+          const r = editor.applyMaterialSource(materialName, s);
+          matErr.textContent = r.ok ? '' : r.error ?? '';
+        },
+      });
+    } else if (force || (!matCode.focused() && src !== matCode.getValue() && !matErr.textContent)) {
+      matCode.setValue(src);
+      if (force) matErr.textContent = '';
+    }
+  }
+
   // ================= glue =================
   function renderBar(): void {
     bSelect.classList.toggle('on', editor.state.tool === 'select');
@@ -299,6 +362,7 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
     renderBar();
     renderRoads();
     if (activeTab === 'profile') followSelection();
+    if (activeTab === 'material') renderMaterial();
   };
   const off = editor.onState(render);
   const offLib = library.onChange(() => { if (activeTab === 'profile') renderProfile(); });
@@ -307,6 +371,7 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
   return () => {
     off(); offLib();
     code?.destroy();
+    matCode?.destroy();
     dock.remove();
   };
 }

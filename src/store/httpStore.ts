@@ -85,6 +85,6 @@ export class HttpRoadStore implements RoadStore {
   }
 
   saveLibrary(doc: LibraryDocument, baseRevision?: number): Promise<SaveResult> {
-    return this.post(`${this.base}/roadlib-save.php`, { profiles: doc.profiles, baseRevision }, baseRevision);
+    return this.post(`${this.base}/roadlib-save.php`, { profiles: doc.profiles, materials: doc.materials ?? {}, baseRevision }, baseRevision);
   }
 }

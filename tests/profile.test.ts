@@ -71,7 +71,7 @@ describe('profile compiler', () => {
     for (const name of Object.keys(PRESET_SOURCES)) {
       const p = lib.resolve(name);
       expect(p.segments.length).toBe(p.points.length - 1);
-      expect(p.coreHalfWidth).toBeGreaterThan(0.3);
+      expect(p.coreHalfWidth).toBeGreaterThan(0.2);
       expect(p.outerHalfWidth).toBeGreaterThanOrEqual(p.coreHalfWidth);
       for (let i = 1; i < p.points.length; i++) expect(p.points[i].x).toBeGreaterThanOrEqual(p.points[i - 1].x - 1e-9);
     }

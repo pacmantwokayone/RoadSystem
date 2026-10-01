@@ -121,6 +121,17 @@ describe.skipIf(!phpOk)('HttpRoadStore ↔ reference PHP backend', () => {
     expect(await store.saveLibrary({ version: 1, profiles: {} }, 0)).toEqual({ ok: false, conflict: true, serverRevision: 1 });
   });
 
+  it('materials travel with the library document and are validated like profiles', async () => {
+    const lib = await store.loadLibrary();
+    const rev = lib!.revision!;
+    const r = await store.saveLibrary({ version: 1, profiles: lib!.profiles, materials: { kantonsrot: 'export default (M) => M.paint({ color: 0xaa2222, tileM: 1, noise: 0 })' } }, rev);
+    expect(r.ok).toBe(true);
+    const back = await store.loadLibrary();
+    expect(back!.materials!.kantonsrot).toContain('M.paint');
+    const bad = (await fetch(`${rw.base}/roadlib-save.php`, { method: 'POST', body: JSON.stringify({ profiles: {}, materials: { '../x': 'code' } }) })).status;
+    expect(bad).toBe(400);
+  });
+
   it('rejects invalid input', async () => {
     const bad = async (body: unknown): Promise<number> => (await fetch(`${rw.base}/roads-save.php`, { method: 'POST', body: JSON.stringify(body) })).status;
     expect(await bad({ location: '../etc/passwd', roads: [] })).toBe(400);

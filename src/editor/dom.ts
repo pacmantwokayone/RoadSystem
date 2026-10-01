@@ -51,6 +51,7 @@ export const EDITOR_CSS = `
 .rse-code .cm-editor { height: 100%; font-size: 12px; } .rse-code .cm-scroller { overflow: auto; font-family: ui-monospace, Menlo, monospace; }
 .rse-err { color: #ff9b9b; font-size: 12px; min-height: 16px; white-space: pre-wrap; flex: none; }
 .rse-hint { color: #7f93a8; font-size: 12px; }
+.rse-swatch { border-left: 14px solid #888; padding: 6px 10px; background: #17212e; border-radius: 4px; font-size: 12px; color: #b9c9da; flex: none; }
 .rse-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 `;
 

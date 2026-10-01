@@ -45,6 +45,28 @@ final class RoadDocs
      */
     public function save(string $scope, array $doc, ?int $base, string $user): array
     {
+        // Two writers racing can make the database refuse one of them (SQLite: "database is locked" when a
+        // read lock cannot be upgraded; MySQL/InnoDB: deadlock 1213 / lock wait timeout 1205). The loser simply
+        // retries: it then sees the new revision and reports a clean conflict instead of an error.
+        for ($attempt = 1; ; $attempt++) {
+            try {
+                return $this->saveOnce($scope, $doc, $base, $user);
+            } catch (PDOException $e) {
+                if ($this->db->inTransaction()) {
+                    $this->db->rollBack();
+                }
+                $code = (int)($e->errorInfo[1] ?? 0);
+                $transient = str_contains($e->getMessage(), 'locked') || in_array($code, [1205, 1213], true);
+                if (!$transient || $attempt >= 8) {
+                    throw $e;
+                }
+                usleep(random_int(2000, 25000) * $attempt);
+            }
+        }
+    }
+
+    private function saveOnce(string $scope, array $doc, ?int $base, string $user): array
+    {
         $json = json_encode($doc, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
         $now = gmdate('Y-m-d H:i:s');
         $this->db->beginTransaction();

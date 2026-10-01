@@ -5,7 +5,7 @@ Eigenständiges Modul – ändert keine Spieldateien. Plan und Architektur: [`do
 
 ## Stand
 
-Phase 0–4 fertig (Setup, Core, Profile + Extrusion, Persistenz + Editor, Netzwerk + Kreuzungen):
+Phase 0–5 fertig (Setup, Core, Profile + Extrusion, Persistenz + Editor, Netzwerk + Kreuzungen, Oberflächen + Markierungen):
 
 - `src/core` – Weltkonvention (`simToThree`), zentripetaler Catmull-Rom (`PathCurve`), Frames/Banking,
   krümmungsadaptives Sampling, Höhen-Alignment (`drape` mit FIR-Glättung, naht-konsistent)
@@ -13,9 +13,10 @@ Phase 0–4 fertig (Setup, Core, Profile + Extrusion, Persistenz + Editor, Netzw
 - `src/runtime` – `RoadSystem.resync()`: baut Chunks erst, wenn das Terrain darunter *settled* ist (wie `riverField`)
 - `src/terrain/mockStreamTerrain.ts` – Mock von `StreamTerrain` (Kachel-Streaming, `null`, grobe Fallback-Höhe, `isSettledAt`)
 - `src/profile` – Profil-DSL (`R.profile(...).both(h => h.surface(...))`), Compiler für Profil-*Code*,
-  `ProfileLibrary` (Hot-Reload mit Fehler-Isolation), Presets Flurstraße / Hauptstraße / Wanderweg
+  `ProfileLibrary` (Hot-Reload mit Fehler-Isolation), 19 Presets (Wanderweg → Autobahn), Markierungen
 - `src/mesh` – `buildChunkGeometry` (Extrusion mit Körper, analytische Normalen, UVs in Metern), `RoadMeshLayer`
-- `src/surface/materials.ts` – `MaterialRegistry` (Material-*Namen* → prozedurale Lambert-Materialien, später durch Texturen ersetzbar)
+- `src/surface` – `MaterialRegistry` (Material-*Namen* → prozedurale Shader-Materialien mit Verschleiß + Wetter, später durch Texturen ersetzbar),
+  `MaterialLibrary` (Materialien als Code, Hot-Reload; Material-Tab im Editor)
 - `src/network` – `junction.ts` (Kreuzungsgeometrie: Setbacks, Ecken-Rundung, Randpolygon, Rückfälle), `graph.ts` (Netz normalisieren),
   `RoadSystem.setNetwork` (Diff-Aufbau), `JunctionRuntime` + `junctionMesh` (Patch aus den echten Armenden)
 - `src/store` – `RoadStore`-Vertrag + `MemoryStore` / `StorageStore` / `HttpRoadStore` (Revisionen, Konflikte)
@@ -28,7 +29,8 @@ Phase 0–4 fertig (Setup, Core, Profile + Extrusion, Persistenz + Editor, Netzw
 
 ```bash
 npm install
-npm run dev        # Demo + Editor (Wählen/Zeichnen, Profil-Code live, Speichern im Browser)
+npm run dev        # Demo + Editor (Wählen/Zeichnen, Profil-/Material-Code live, Speichern im Browser)
+                   # Query: ?gallery=1&flat=1 (alle Presets), ?wet=0.8&snow=0.3&age=0.7 (Wetter/Alter)
 npm test           # Vitest
 npm run typecheck
 ```

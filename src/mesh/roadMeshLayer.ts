@@ -12,6 +12,10 @@ import type { JunctionRuntime } from '../runtime/junctionRuntime';
 import type { MaterialRegistry } from '../surface/materials';
 import { buildChunkGeometry, DEFAULT_EXTRUDE_OPTIONS, type ExtrudeOptions } from './extrude';
 import { buildJunctionGeometry } from './junctionMesh';
+import { buildChunkMarkings } from './markings';
+
+/** markings live in the same per-owner mesh map under an offset index */
+const MARKING_INDEX = 1_000_000;
 
 type Owner = RoadRuntime | JunctionRuntime;
 
@@ -75,6 +79,8 @@ export class RoadMeshLayer {
   private buildChunk(rt: RoadRuntime, chunk: RoadChunk): void {
     const { geometry, materials } = buildChunkGeometry(rt, chunk, this.extrude);
     this.put(rt, chunk.index, geometry, materials);
+    const marks = buildChunkMarkings(rt, chunk);
+    if (marks) this.put(rt, MARKING_INDEX + chunk.index, marks.geometry, marks.materials);
     if (rt.pendingCount === 0) this.dropRetired(`r:${rt.def.id}`);
   }
 

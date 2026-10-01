@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
-  MockStreamTerrain, RoadSystem, RoadDebugLayer, RoadMeshLayer, ProfileLibrary, MaterialRegistry,
+  MockStreamTerrain, RoadSystem, RoadDebugLayer, RoadMeshLayer, ProfileLibrary, MaterialRegistry, MaterialLibrary,
   StorageStore, MemoryStore, type RoadDef, type RoadStore,
 } from 'roadsystem';
 import { RoadEditor, mountEditorPanels } from 'roadsystem/editor';
@@ -27,11 +27,14 @@ const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.3, 40
 const controls = new OrbitControls(camera, renderer.domElement);
 
 // Sim-space world, three-space meshes (z mirrored) — same as the game.
-const terrain = new MockStreamTerrain({ buildMeshes: true, loadLatencyFrames: Number(qp.get('lat') ?? 25) });
+// ?flat=1 → flat ground (clean look at profiles / markings)
+const terrain = new MockStreamTerrain({ buildMeshes: true, loadLatencyFrames: Number(qp.get('lat') ?? 25), ...(qp.get('flat') ? { heightFn: () => 800 } : {}) });
 scene.add(terrain.group);
 
 const library = new ProfileLibrary();
 const materials = new MaterialRegistry();
+const materialLibrary = new MaterialLibrary(); // materials as editable code; the editor binds the registry to it
+materials.setWeather({ wet: Number(qp.get('wet') ?? 0), snow: Number(qp.get('snow') ?? 0), age: Number(qp.get('age') ?? 0.3) });
 const system = new RoadSystem(terrain, (d) => library.resolve(d.profile, d.params));
 const meshLayer = new RoadMeshLayer(system, materials);
 scene.add(meshLayer.group);
@@ -81,7 +84,7 @@ const editor = new RoadEditor({
       return ray.intersectObjects(terrain.group.children.filter((c) => c.visible), false)[0]?.point ?? null;
     },
   },
-  system, library, materials, store, location: LOCATION, roadGroup: meshLayer.group,
+  system, library, materials, materialLibrary, store, location: LOCATION, roadGroup: meshLayer.group,
 });
 mountEditorPanels(editor, document.body, { library, materials });
 void (async () => {
@@ -119,6 +122,16 @@ if (qp.get('net')) {
   setTimeout(() => editor.model.load({ version: 1, roads, nodes }), 800);
 }
 
+// ?gallery=1 → one straight piece of road per profile, side by side (use with ?flat=1)
+if (qp.get('gallery')) {
+  const names = library.names();
+  const roads: RoadDef[] = names.map((n, i) => ({
+    id: `g-${n}`, name: n, profile: n,
+    points: [0, 1, 2, 3].map((k) => ({ x: 3000 + k * 40, y: 800, z: 3000 + i * 26 })),
+  }));
+  setTimeout(() => editor.model.load({ version: 1, roads }), 800);
+}
+
 // ---- camera ----
 const cam = qp.get('cam')?.split(',').map(Number);
 const start = new THREE.Vector3(3200, 700, -3000);
@@ -153,14 +166,14 @@ renderer.setAnimationLoop(() => {
     const st = system.stats();
     const ts = terrain.loadStats();
     hud.textContent =
-      `RoadSystem – Phase 4 (Kreuzungen)\n` +
+      `RoadSystem – Phase 5 (Oberflächen & Markierungen)\n` +
       `Straßen: ${editor.model.list.length}   Kreuzungen: ${system.junctionStats().ready}/${system.junctionStats().total}   Chunks: ${st.ready}/${st.chunks}\n` +
       `Terrain-Kacheln: ${ts.ready} geladen / ${ts.known} bekannt`;
   }
 });
 
 (window as unknown as Record<string, unknown>).__demo = {
-  editor, library,
+  editor, library, materials, materialLibrary,
   stats: () => ({ roads: system.stats(), tiles: terrain.loadStats(), meshes: meshLayer.meshCount, count: editor.model.list.length, nodes: editor.model.nodeList.length, junctions: system.junctionStats(), dirty: editor.isDirty }),
   /** screen position (px) of a sim-space ground point, for scripted clicks */
   project(x: number, z: number): { x: number; y: number } {
@@ -176,5 +189,11 @@ renderer.setAnimationLoop(() => {
     return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
   },
   height: (x: number, z: number) => terrain.heightFn(x, z),
+  /** place the camera (THREE space) — for screenshots */
+  setCam(px: number, py: number, pz: number, tx: number, ty: number, tz: number): void {
+    camera.position.set(px, py, pz);
+    controls.target.set(tx, ty, tz);
+    controls.update();
+  },
   roads: () => editor.model.list,
 };
