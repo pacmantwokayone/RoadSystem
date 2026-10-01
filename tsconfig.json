@@ -16,5 +16,5 @@
     "baseUrl": ".",
     "paths": { "roadsystem": ["src/index.ts"], "roadsystem/editor": ["src/editor/index.ts"] }
   },
-  "include": ["src", "demo", "tests"]
+  "include": ["src", "demo", "tests", "artifact"]
 }

@@ -11,6 +11,7 @@
 //
 // Every option is validated and clamped in `finish()`.
 
+import { compileFactory } from '../core/codeEval';
 import { resolveParams } from '../profile/compile';
 import type { ParamSchema, ParamValues } from '../profile/types';
 
@@ -254,7 +255,7 @@ export function compileWaterSource(source: string): CompiledWater {
   const code = source.replace(/export\s+const\s+params\b/, 'const params').replace(/export\s+default\b/, '__water =');
   let factory: (W: WaterApi) => CompiledWater;
   try {
-    factory = new Function('W', `"use strict"; let __water;\n${code}\n;return { params: typeof params !== 'undefined' ? params : {}, build: __water };`) as typeof factory;
+    factory = compileFactory<WaterApi>('W', `"use strict"; let __water;\n${code}\n;return { params: typeof params !== 'undefined' ? params : {}, build: __water };`) as typeof factory;
   } catch (e) {
     throw new WaterCompileError(`Syntax error: ${(e as Error).message}`);
   }

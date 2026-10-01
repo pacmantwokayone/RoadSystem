@@ -152,6 +152,28 @@ describe.skipIf(!phpOk)('HttpRoadStore ↔ reference PHP backend', () => {
     expect(loaded!.roads[0].points[1].mode).toBe('bridge');
   });
 
+  it('rivers, lakes and water styles travel with the documents', async () => {
+    const waterDoc: RoadsDocument = {
+      version: 1, roads: [],
+      rivers: [{ id: 'bach1', name: 'Bach', style: 'wildbach', startLake: 'see1', points: [{ x: 0, y: 900, z: 0, width: 4 }, { x: 50, y: 880, z: 10, seg: 'fall' }, { x: 60, y: 500, z: 10, depth: 1.2 }] }],
+      lakes: [{ id: 'see1', name: 'See', style: 'bergsee', level: 900, depth: 12, outline: [{ x: -50, z: -20 }, { x: -10, z: -20 }, { x: -10, z: 20 }, { x: -50, z: 20 }] }],
+    };
+    expect((await store.saveRoads('wtest', waterDoc)).ok).toBe(true);
+    const loaded = await store.loadRoads('wtest');
+    expect(loaded!.rivers![0].points[1].seg).toBe('fall');
+    expect(loaded!.rivers![0].startLake).toBe('see1');
+    expect(loaded!.lakes![0].level).toBe(900);
+    expect(loaded!.lakes![0].outline).toHaveLength(4);
+    const lib = await store.loadLibrary();
+    const src = "export default (p, W) => W.river('x').size(3, 0.5);";
+    expect((await store.saveLibrary({ version: 1, profiles: lib!.profiles, waters: { meinbach: src } }, lib!.revision)).ok).toBe(true);
+    expect((await store.loadLibrary())!.waters!.meinbach).toBe(src);
+    const bad = async (url: string, body: unknown): Promise<number> => (await fetch(`${rw.base}/${url}`, { method: 'POST', body: JSON.stringify(body) })).status;
+    expect(await bad('roads-save.php', { location: 'w2', roads: [], rivers: 'nope' })).toBe(400);
+    expect(await bad('roads-save.php', { location: 'w2', roads: [], lakes: [{ id: 'l', outline: 'x', level: 1 }] })).toBe(400);
+    expect(await bad('roadlib-save.php', { profiles: {}, waters: { '../x': 'code' } })).toBe(400);
+  });
+
   it('rejects invalid input', async () => {
     const bad = async (body: unknown): Promise<number> => (await fetch(`${rw.base}/roads-save.php`, { method: 'POST', body: JSON.stringify(body) })).status;
     expect(await bad({ location: '../etc/passwd', roads: [] })).toBe(400);

@@ -22,11 +22,17 @@ export function waterDemoHeight(x: number, z: number): number {
   const { plateau, valley, cliffX, cliffW, centreZ } = WATER_DEMO;
   const noise = (k: number): number => Math.sin(x / (170 * k) + z / (230 * k)) * 3 + Math.sin(x / (61 * k) - z / (83 * k)) * 1.2;
   const dz = Math.abs(z - centreZ);
-  const walls = smooth(260, 900, dz) * 220; // the valley narrows into mountains to the north and south
-  const cliff = smooth(cliffX - cliffW / 2, cliffX + cliffW / 2, x); // 0 on the plateau, 1 in the valley
-  const top = plateau + noise(1) * 2.2 + 25 * smooth(2500, 2200, x) - Math.max(0, x - 2900) * 0.04;
-  const floor = valley - (x - cliffX) * 0.018 + noise(0.6) * 1.4 + walls * 0.8;
-  return top + (floor - top) * cliff + (walls * (1 - cliff)) * 0.4;
+  // the corridor along the waters stays calm; away from it the land gets rough and the valley narrows into mountains
+  const rough = smooth(120, 420, dz);
+  const calm = smooth(150, 500, dz);
+  const walls = smooth(260, 900, dz) * 420 + smooth(500, 1400, dz) * 320;
+  // the cliff edge meanders away from the stream (and runs straight through the fall)
+  const cx = cliffX + (70 * Math.sin((z - centreZ) / 190) + 35 * Math.sin((z - centreZ) / 71 + 1.3)) * smooth(40, 260, dz);
+  const cliff = smooth(cx - cliffW / 2, cx + cliffW / 2, x); // 0 on the plateau, 1 in the valley
+  const hills = Math.sin(x / 260) * Math.sin(z / 310) * 26 + Math.sin(x / 97 + z / 131) * 8 + Math.sin(z / 53 - x / 71) * 3;
+  const top = plateau + noise(1) * 2.2 + 25 * smooth(2500, 2200, x) - Math.max(0, x - 2900) * 0.04 + hills * rough;
+  const floor = valley - (x - cliffX) * 0.018 + noise(0.6) * 1.4 + walls * 0.8 + (Math.sin(x / 190 + 1) * Math.sin(z / 240) * 12 + Math.sin(x / 73 - z / 97) * 3) * calm;
+  return top + (floor - top) * cliff + walls * (1 - cliff) * 0.5;
 }
 
 const P = (x: number, z: number, extra: Partial<RiverPoint> = {}): RiverPoint => ({ x, y: 0, z, ...extra });
@@ -73,9 +79,9 @@ export function waterDemoWaters(ground: (x: number, z: number) => number = water
 
 /** a few good looks at the scene: [camera x, y, z (THREE space!), target x, y, z] */
 export const WATER_DEMO_VIEWS: Record<string, { label: string; cam: [number, number, number, number, number, number] }> = {
-  overview: { label: 'Überblick', cam: [3100, 1900, -3900, 3500, 900, -3000] },
+  overview: { label: 'Überblick', cam: [4700, 1500, -2100, 3400, 900, -3000] },
   fall: { label: 'Wasserfall (400 m)', cam: [3680, 1030, -3180, 3410, 880, -3000] },
-  fallTop: { label: 'Kante des Falls', cam: [3300, 1260, -3060, 3395, 1170, -3000] },
+  fallTop: { label: 'Kante des Falls', cam: [3345, 1215, -3010, 3425, 940, -3000] },
   pool: { label: 'Gumpen am Fuss', cam: [3560, 850, -3070, 3430, 800, -3000] },
   rapids: { label: 'Stromschnellen', cam: [3160, 1235, -3045, 3160, 1190, -3008] },
   upperLake: { label: 'Oberer See', cam: [2640, 1290, -3260, 2740, 1197, -3010] },

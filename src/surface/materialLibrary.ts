@@ -7,6 +7,7 @@
 // plus helpers `M.mix(a, b, t)`, `M.shade(hex, factor)`, `M.rgb(r, g, b)` and `M.texture(url)` to swap in a real
 // texture later. Like profiles, material sources are executable code: only trusted editors may write them.
 
+import { compileFactory } from '../core/codeEval';
 import * as THREE from 'three';
 import { DEFAULT_MATERIAL_DEFS, type MaterialDef } from './materials';
 import { SURFACE_KINDS, type SurfaceKind } from './surfaceShader';
@@ -78,7 +79,7 @@ export function compileMaterialSource(source: string): () => MaterialDef {
   const code = source.replace(/export\s+default\b/, '__material =');
   let factory: (M: MaterialApi) => (M: MaterialApi) => unknown;
   try {
-    factory = new Function('M', `"use strict"; let __material;\n${code}\n;return __material;`) as typeof factory;
+    factory = compileFactory<MaterialApi>('M', `"use strict"; let __material;\n${code}\n;return __material;`) as typeof factory;
   } catch (e) {
     throw new MaterialCompileError(`Syntax error: ${(e as Error).message}`);
   }

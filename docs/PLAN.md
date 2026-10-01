@@ -435,6 +435,53 @@ gemischte Samples werden jetzt nie unter Terrain + Abstand gedrückt (`RoadRunti
 
 ---
 
+## 2j. Umsetzungsnotizen Wasser (Flüsse, Seen, Wasserfälle)
+
+**Entscheid:** Die generierten swissTLM3D-Flüsse werden **nicht** mehr benutzt. Die wenigen Flüsse werden von Hand im Tool gezeichnet; das Modul hat dafür
+ein eigenes Datenmodell (Schwester von `RoadDef`), das im selben Dokument liegt (`RoadsDocument.rivers` / `lakes`, optional → ältere Dokumente bleiben gültig).
+
+**Datenmodell** (`water/types.ts`): `RiverDef` = Punktliste `{x, y, z, width?, depth?, seg?}` — `y` ist der **Wasserspiegel** am Punkt, `seg` die Art des
+Abschnitts *nach* dem Punkt: `river` · `rapids` (Stromschnelle) · `fall` (Wasserfall: fällt frei vom Punkt zum nächsten, beliebig tief; unter 0.8 m Höhe wird er zur
+Stromschnelle). `startLake` / `endLake` / `endRiver` verbinden Enden mit Seen bzw. anderen Flüssen. `LakeDef` = Spiegel `level`, `depth`, Umriss (Chaikin-geglättet, die
+gleiche Linie für Terrain und Mesh). Alles wird validiert/geklemmt (`sanitizeWaters`), `normalizeWaters` erhält die Objektidentität (Diff im System).
+
+**Hydrologie** (`water/hydro.ts`): Pegel nie bergauf (monotone Pegel + `MIN_SLOPE`, PCHIP pro Lauf), Gefälle → Geschwindigkeit/Turbulenz; Wasserfälle als ballistische
+Kurve `x = run·√f, y = −H·f` (analytische Tangente), Breite aus der Kante. **Terrain-Carve** (`water/field.ts`): reine Funktion `modify(x, z, base)`: Kanal und Becken setzen die
+Höhe *exakt* (schneiden **und** füllen), Böschung und Deich nur formend (V-Tal bis 8× Uferbreite; gegen tieferes Gelände ein Deich 0.25 m über dem Wasser, Böschung 1:1.5).
+Wasserfälle bekommen Schluchtwände und einen Gumpen (Becken am Fuss). Das Terrain bekommt dafür nur zwei Haken (am Mock: `modifier`, `tint`, `invalidate(rect)`,
+`baseHeightAt`) — derselbe Mechanismus, den die Strassen später für ihr Carve brauchen (Phase 10).
+
+**System** (`water/system.ts`, wie `RoadSystem`): Diff nach Identität, Chunks (48 m, Fälle als eigene Chunks), gebaut erst nach dem Carve (`flush()` nach Debounce) und wenn das Terrain
+*settled* ist. Strassen, die dem veränderten Terrain nahe sind, werden danach neu gebaut (`RoadSystem.invalidateRect`; die alten Meshes bleiben bis zum Ersatz sichtbar).
+
+**Darstellung:** ein Shader-Material für Fluss/See/Fall (`water/waterMaterial.ts`, ohne Texturen): tiefenabhängige Farbe aus dem echten Terrain, Wellen, **Strömungsstreifen in
+Fliessrichtung**, Schaum am Ufer (aus der Tiefe), auf Stromschnellen (Turbulenz) und **um und hinter allem, was aus dem Wasser ragt** (Felsen, Brückenpfeiler → `Obstacle`),
+weisse Schleier mit Streifen am Wasserfall. Ufer: Streifen mit einem Strassen-Material (`banks.material`), Felsen (6 Varianten, in/neben dem Wasser), nasses Gelände (Tint).
+**Partikel** (`water/particles.ts`): Schaumflecken, die mit der Strömung treiben (Fliessrichtung sichtbar), Gischt und Nebel am Wasserfall/auf Stromschnellen, nur nahe der Kamera.
+
+**Stile als Code** (`water/style.ts`, `WaterLibrary`, wie Profile/Brücken): `W.river('Name').size().colors().clarity().banks().flow().foam().rocks().particles().fall()` /
+`W.lake(…)…waves()`; Presets: bach, wildbach, fluss, strom, bergsee, gletschersee, weiher. Gespeichert im Bibliotheksdokument (`waters`).
+
+**Editor** (`editor/waterEditor.ts`): Werkzeuge **Fluss (R)** und **See (L)**, Handles, Einfügen, Verschieben, Entf, Undo; Inspector-Tab „Wasser“ (Stil + Parameter, Breite/Tiefe pro Punkt,
+**Abschnitt danach: Fluss / Stromschnelle / Wasserfall**, Verbindungen, „Pegel aus Terrain“), Tab „Wasser-Stil“ (Code). Pegel folgen beim Zeichnen/Ziehen dem Gelände
+(`water/autolevel.ts`: laufendes Minimum, Wasserfall-Fuss auf dem Boden darunter). Ein Fluss, dessen Ende in einem See liegt, mündet dort (und wird am Ufer gekappt,
+`trimAtLake`). Brückenvorschläge lesen die gezeichneten Flüsse mit; Brückenpfeiler im Wasser werden Schaum-Hindernisse (`water/bridgeObstacles.ts`).
+
+**Testseite:** `artifact/` baut `artifact/dist/index.html` — eine einzige Datei (three.js und Modul gebündelt) mit Testgelände (`water/demoScene.ts`: Bergsee → Wildbach mit Stromschnellen →
+~390 m Wasserfall mit Gumpen → Talfluss mit kleinem Fall, Brücke, Seitenbach → unterer See), Kamera-Ansichten, Längsprofil und dem echten Editor. Die mitgelieferten Stile sind **vorkompiliert**
+(`core/codeEval.ts`), die Seite läuft also auch, wo `eval` gesperrt ist (nur das Bearbeiten von Code braucht eval). `node artifact/build.mjs` baut sie (`--csp` zusätzlich eine Variante mit strikter CSP zum Testen).
+
+**Bekannte Grenzen:**
+- Das Wasser ist eine Oberfläche, kein Volumen: keine Interaktion mit dem Spieler (Eintauchen, Strömungskraft) — Abfrage `WaterField.waterAt()` ist vorbereitet.
+- Der Carve gilt dem Mock-Terrain; im echten `StreamTerrain` braucht es den gleichen kleinen Patch (Modifier-Hook in der Kachelhöhe + Mesh, Phase 10).
+  Die Auflösung des Terrains begrenzt die Ufer: bei 3 m Mesh-Abstand sind Flüsse unter ~3 m Breite eher Rinnen als Kanäle.
+- Flüsse verzweigen nicht (nur Mündung in einen anderen Fluss, kein Delta); Wasserfälle sind eine Kurve in einer Ebene (keine Kaskaden mit mehreren Stufen — dafür mehrere Fälle hintereinander).
+- Partikel sind CPU-gesteuerte Punkte (max. ~6000), keine Wasseroberfläche-Refraktion/-Reflexion der Umgebung (Himmelsfarbe + Fresnel).
+- Seen haben keinen Abfluss-Pegel: Pegel ändern sich nur von Hand; ein See mit zwei Ausflüssen ist erlaubt, aber nicht überprüft.
+- Wasserfarben/Schaum sind Lambert-unabhängig: kein Schattenwurf auf dem Wasser, keine Nacht-Beleuchtung.
+
+---
+
 ## 3. Kernkonzepte im Detail
 
 ### 3.1 Spline & Terrain-Anpassung
@@ -664,11 +711,12 @@ Jede Phase endet mit etwas **Sichtbarem und Lauffähigem** in der Demo (gegen da
 | 6 | **Props** ✅ | Scatter-System, Leitplanken (+Auto-Regel), Laternen, Schilder (SSV), Vortrittsschilder automatisch |
 | 7 | **Ampeln** ✅ | Signalgruppen, automatischer Phasenplan, Fußgängerstreifen, Haltelinien |
 | 8 | **Brücken** ✅ | Balken/Bogen/Viadukt, Pfeiler bis Terrain, Widerlager, Geländer, Flusskreuzungs-Vorschlag |
+| 8b | **Wasser** ✅ | Handgezeichnete Flüsse, Seen, Stromschnellen, Wasserfälle (Carve, Schaum, Partikel, Stil-Code), Testseite (Artefakt) |
 | 9 | **Tunnel** | Röhre, Portal-Fassade, Portal-Graben (Carve), Überdeckungs-Validierung, Beleuchtung, Galerien |
 | 10 | **Terrain-Modifier** | `TerrainModifier`-Interface, `RoadTerrainModifier` (Absenken + Anheben), Patch-Vorschlag für `StreamTerrain`, Böschungs-Skirts |
 | 11 | **Erweiterte Topologie** | Kreisel, Auf-/Abfahrten, Autobahnkreuz-Bausteine, Unterführungen |
 | 12 | **In-Game-Editor** | `mountEditor(host)` im echten Spiel, Eingabe-Arbitrierung, `HttpRoadStore`, Konfliktdialog, Auth-Hinweise |
-| 13 | **swissTLM3D-Import** | `tools/`-Skript (Python wie `extract_rivers.py`) + Importer → Netz aus Objektart/Belag/Kunstbaute |
+| 13 | **swissTLM3D-Import** | `tools/`-Skript (Python wie `extract_rivers.py`) + Importer → Netz aus Objektart/Belag/Kunstbaute (nur Strassen: Flüsse werden von Hand gezeichnet, siehe 2j) |
 | 14 | **Gameplay-API** | `sampleAt`, Lane-Graph, `findPath`, Collider-Export, Road-Mask-Textur, Vegetations-Ausschluss |
 | 15 | **Tools & Performance** | Auto-Routing, Trassierungsvalidierung, Worker-Build, LOD, Baking (ohne `new Function` im Release) |
 | 16 | **Politur** | Doku, Beispiele, Tests, API-Stabilisierung |

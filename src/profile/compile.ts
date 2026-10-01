@@ -7,6 +7,7 @@
 // execution by design: only authenticated editors may write profile sources
 // (see docs/PLAN.md §2a Sicherheit); a release build should ship baked data.
 
+import { compileFactory } from '../core/codeEval';
 import { profileApi, ProfileBuilder, type ProfileApi } from './builder';
 import type { ParamDef, ParamSchema, ParamValues, ProfileData } from './types';
 
@@ -23,7 +24,7 @@ export function compileProfileSource(source: string): CompiledProfile {
     .replace(/export\s+default\b/, '__profile =');
   let factory: (R: ProfileApi) => CompiledProfile;
   try {
-    factory = new Function(
+    factory = compileFactory<ProfileApi>(
       'R',
       `"use strict"; let __profile;\n${code}\n;return { params: typeof params !== 'undefined' ? params : {}, build: __profile };`,
     ) as (R: ProfileApi) => CompiledProfile;

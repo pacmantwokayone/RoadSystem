@@ -5,7 +5,7 @@ Eigenständiges Modul – ändert keine Spieldateien. Plan und Architektur: [`do
 
 ## Stand
 
-Phase 0–8 fertig (Setup, Core, Profile + Extrusion, Persistenz + Editor, Netzwerk + Kreuzungen, Oberflächen + Markierungen, Props, Ampeln + Kreuzungsdetails, Brücken):
+Phase 0–8 fertig (Setup, Core, Profile + Extrusion, Persistenz + Editor, Netzwerk + Kreuzungen, Oberflächen + Markierungen, Props, Ampeln + Kreuzungsdetails, Brücken) und **Wasser** (handgezeichnete Flüsse, Seen, Wasserfälle):
 
 - `src/core` – Weltkonvention (`simToThree`), zentripetaler Catmull-Rom (`PathCurve`), Frames/Banking,
   krümmungsadaptives Sampling, Höhen-Alignment (`drape` mit FIR-Glättung, naht-konsistent)
@@ -21,6 +21,9 @@ Phase 0–8 fertig (Setup, Core, Profile + Extrusion, Persistenz + Editor, Netzw
   Asset-/Material-Registry (ersetzbar), SSV-Schilder (Canvas), Vortrittsschilder aus der Kreuzungstopologie, `PropLayer`
 - `src/structures` – Brücken als Code (`B.bridge(…).deck().piers().arch().truss()…`, 6 Typen), `BridgeLibrary`, Geometrie aus Lofts (Pfeiler, Widerlager,
   Träger, Bogen, Fachwerk, Geländer), `BridgeLayer`, Flusskreuzungs-Vorschlag (`suggestBridges`)
+- `src/water` – Flüsse, Seen, Stromschnellen und Wasserfälle von Hand gezeichnet (`RiverDef`/`LakeDef` im Strassendokument), Hydrologie (Pegel nie bergauf, ballistischer Fall),
+  Terrain-Carve als reine Funktion (`WaterField`), Shader mit Ufer-/Hindernis-/Stromschnellen-Schaum, Felsen, Partikel (Strömung, Gischt, Nebel), Stile als Code (`WaterLibrary`), `WaterLayer`;
+  dazu `editor/waterEditor.ts` (Werkzeuge Fluss/See, Inspector) und die Testseite `artifact/`
 - `src/junction` – Knoten-Steuerung (Vortritt, Haltelinien, Fussgängerstreifen) und Ampel-Phasenplan/-Controller (reine Funktionen der Zeit);
   dazu `props/signalLayer.ts` (Ampeln, Lampen per Vertexfarbe), `mesh/junctionMarkings.ts`, `network/pavement.ts` + `mesh/junctionPavement.ts` (Trottoir-Ecken)
 - `src/network` – `junction.ts` (Kreuzungsgeometrie: Setbacks, Ecken-Rundung, Randpolygon, Rückfälle), `graph.ts` (Netz normalisieren),
@@ -40,7 +43,9 @@ npm run dev        # Demo + Editor (Wählen/Zeichnen, Profil-/Material-Code live
                    # Props: ?cliff=1 (Leitplanken am Abgrund), ?village=1 (Kreuzung mit Allee/Laternen/Vortritt),
                    #        ?assets=1&flat=1 (alle Props + Schilder), ?props=0 (ausblenden)
                    # Brücken: ?bridges=1 (6 Typen über Schluchten), ?rivers=1 (Fluss + Vorschläge im Tab „Brücke“)
+                   # Wasser: ?water=1 (Bergsee, Wildbach, 400-m-Wasserfall, Talfluss mit Brücke, unterer See), &particles=0
                    # Ampeln: ?signals=1&flat=1 (Kreuzung mit Ampeln + Trottoir), ?t=12 (Ampelzeit einfrieren), ?sigspeed=5 (schneller)
+node artifact/build.mjs   # Testseite: artifact/dist/index.html (eine Datei, three.js eingebettet); --csp: Variante ohne eval zum Testen
 npm test           # Vitest
 npm run typecheck
 ```
@@ -59,4 +64,8 @@ npm run typecheck
 | Kreuzung wählen / verschieben | Gelben Marker anklicken / ziehen (alle Arme folgen) |
 | Kurvenradius, Auflösen | Kreuzung wählen → Inspector (oder `Entf`) |
 | Undo / Redo / Speichern | `Strg+Z` / `Strg+Y` / `Strg+S` |
+| Fluss / See zeichnen | `R` / `L`, Klicks setzen Punkte, `Enter` schliesst ab (Ende im See → mündet dort; Ende auf einem Fluss → Zufluss) |
+| Gewässer wählen / Punkt ziehen / einfügen / löschen | Klick auf das Wasser · Handle ziehen · Doppelklick · `Entf` |
+| Stromschnelle / Wasserfall | Tab „Wasser“ → Punkt wählen → „Abschnitt danach“ (ein Wasserfall fällt bis zum nächsten Punkt, beliebig tief) |
+| Wasserstil bearbeiten | Tab „Wasser-Stil“ (Code) |
 | Profil bearbeiten | Tab „Profil (Code)“ – wirkt sofort an allen Straßen mit diesem Profil |
