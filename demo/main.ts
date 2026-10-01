@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
-  MockStreamTerrain, RoadSystem, RoadDebugLayer, RoadMeshLayer, PropLayer, GeometryBatch, placementMatrix, SIGN_CATALOG, ProfileLibrary, MaterialRegistry, MaterialLibrary,
+  MockStreamTerrain, RoadSystem, RoadDebugLayer, RoadMeshLayer, PropLayer, SignalLayer, GeometryBatch, placementMatrix, SIGN_CATALOG, ProfileLibrary, MaterialRegistry, MaterialLibrary,
   StorageStore, MemoryStore, type RoadDef, type RoadStore,
 } from 'roadsystem';
 import { RoadEditor, mountEditorPanels } from 'roadsystem/editor';
@@ -55,6 +55,12 @@ scene.add(meshLayer.group);
 const propLayer = new PropLayer(system, { drawDistance: Number(qp.get('propDist') ?? 900) });
 propLayer.group.visible = qp.get('props') !== '0';
 scene.add(propLayer.group);
+// traffic lights follow wall-clock time (?t=12 freezes them at 12 s, ?sigspeed=5 runs them faster)
+const signalLayer = new SignalLayer(system, { drawDistance: Number(qp.get('propDist') ?? 900) });
+signalLayer.group.visible = qp.get('props') !== '0';
+scene.add(signalLayer.group);
+const frozenT = qp.get('t') !== null ? Number(qp.get('t')) : null;
+const sigSpeed = Number(qp.get('sigspeed') ?? 1);
 const debug = new RoadDebugLayer(system, terrain);
 debug.group.visible = false;
 scene.add(debug.group);
@@ -139,6 +145,18 @@ if (qp.get('net')) {
   setTimeout(() => editor.model.load({ version: 1, roads, nodes }), 800);
 }
 
+// ?signals=1 → crossing with traffic lights: Kantonsstrasse × Dorfstrasse, pavements, zebra crossings, pedestrian lights
+if (qp.get('signals')) {
+  const pts = (l: Array<[number, number]>) => l.map(([x, z]) => ({ x, y: 800, z }));
+  const roads: RoadDef[] = [
+    { id: 'k1', name: 'Kantonsstrasse', profile: 'kantonsstrasse', points: pts([[2950, 3000], [3130, 3000], [3300, 3000]]), endNode: 'S' },
+    { id: 'k2', name: 'Kantonsstrasse (2)', profile: 'kantonsstrasse', points: pts([[3300, 3000], [3470, 3000], [3650, 3000]]), startNode: 'S' },
+    { id: 'd1', name: 'Dorfstrasse', profile: 'dorfstrasse', points: pts([[3300, 2750], [3300, 2880], [3300, 3000]]), endNode: 'S' },
+    { id: 'd2', name: 'Dorfstrasse (2)', profile: 'dorfstrasse', points: pts([[3300, 3000], [3300, 3120], [3300, 3250]]), startNode: 'S' },
+  ];
+  setTimeout(() => editor.model.load({ version: 1, roads, nodes: [{ id: 'S', x: 3300, y: 800, z: 3000, control: 'signals', crosswalks: 'all' }] }), 800);
+}
+
 // ?village=1 → crossing: Kantonsstrasse with avenue (priority), Dorfstrasse + Quartierstrasse (give way), lamps and signs
 if (qp.get('village')) {
   const pts = (l: Array<[number, number]>) => l.map(([x, z]) => ({ x, y: 800, z }));
@@ -212,6 +230,7 @@ let frame = 0;
 renderer.setAnimationLoop(() => {
   controls.update();
   propLayer.update(camera);
+  signalLayer.update(frozenT ?? (performance.now() / 1000) * sigSpeed, camera);
   // the "player" is the orbit target; the terrain streams around it (sim z = -three z)
   terrain.update(controls.target.x, -controls.target.z);
   editor.update(); // resyncs the road system with an editing-sized budget
@@ -221,14 +240,14 @@ renderer.setAnimationLoop(() => {
     const st = system.stats();
     const ts = terrain.loadStats();
     hud.textContent =
-      `RoadSystem – Phase 6 (Props: Leitplanken, Laternen, Schilder)\n` +
+      `RoadSystem – Phase 7 (Ampeln, Fussgängerstreifen, Haltelinien)\n` +
       `Straßen: ${editor.model.list.length}   Kreuzungen: ${system.junctionStats().ready}/${system.junctionStats().total}   Chunks: ${st.ready}/${st.chunks}\n` +
       `Terrain-Kacheln: ${ts.ready} geladen / ${ts.known} bekannt`;
   }
 });
 
 (window as unknown as Record<string, unknown>).__demo = {
-  editor, library, materials, materialLibrary, propLayer,
+  editor, library, materials, materialLibrary, propLayer, signalLayer,
   stats: () => ({ roads: system.stats(), tiles: terrain.loadStats(), meshes: meshLayer.meshCount, propMeshes: propLayer.meshCount, props: propLayer.allPlacements().length, count: editor.model.list.length, nodes: editor.model.nodeList.length, junctions: system.junctionStats(), dirty: editor.isDirty }),
   /** screen position (px) of a sim-space ground point, for scripted clicks */
   project(x: number, z: number): { x: number; y: number } {

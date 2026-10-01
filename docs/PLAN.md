@@ -262,7 +262,7 @@ ein Ziel ziehen verbindet. Knoten-Marker ziehen verschiebt alle Arme. Inspector:
   unruhigem Gelände kann das einen leichten Höhenversatz erzeugen. Verbesserung: Knotenhöhe als gemeinsamer
   Anker (mit Phase 10 / Terrain-Modifier).
 - Der Patch deckt nur die **Fahrbahn** (Core-Breite); Bankett/Graben/Gehweg enden an den Armenden (Gehweg-Ecken,
-  Bordstein und Markierungen im Patch kommen mit Phase 7).
+  Bordstein und Markierungen im Patch kommen mit Phase 7 → erledigt, siehe 2h).
 - Patch-Material = Hauptfahrstreifen der breitesten Straße; Unterseite des Patches fehlt (nur von unten sichtbar).
 - Kreisel, Auf-/Abfahrten, Unterführungen: Phase 11.
 
@@ -339,6 +339,47 @@ Messung (headless, 40 Strassen / 1280 Chunks / 24 000 Props): +0.75 ms pro Chunk
 - Laternen leuchten nur optisch (emissive Köpfe), keine Lichtquellen; Nacht/Lichtkegel in Phase 16.
 - Keine Kollision: `PropLayer.allPlacements()`/`railRuns()` liefern die Daten für die Gameplay-API (Phase 14).
 - Brücken-/Tunnelgeländer und Portale kommen mit Phase 8/9.
+
+---
+
+## 2h. Umsetzungsnotizen Phase 7 (Ampeln, Fussgängerstreifen, Haltelinien, Trottoir-Ecken)
+
+**Knoten-Einstellungen** (`NodeDef`, nur Nicht-Standardwerte werden gespeichert, alles validiert in `sanitizeNode`; das PHP-Backend reicht
+Knoten unverändert durch): `control` = `auto` (Vortritt aus dem Rang) | `none` (Rechtsvortritt) | `stop` | `yield` | `signals`,
+`crosswalks` = `auto` (Strassen mit Trottoir) | `none` | `all`, `signalMode` = `fixed` | `flashing` | `off`, `greenS`. Im Editor im
+Kreuzungs-Inspector (ein Undo-Schritt pro Änderung).
+
+**Steuerlogik (`src/junction`, reine Funktionen).** `traits` (Fahrstreifen-/Fahrbahn-Spannen, Trottoir, Mittelleitwand), `controls`
+(`planJunction` → pro Arm: Schild, Linie `stop`/`wait`, Fussgängerstreifen), `signals` (Phasenplan + Controller).
+
+**Markierungen im Knoten** (`mesh/junctionMarkings.ts`): Fussgängerstreifen (0.5 m Balken im 1-m-Raster, 4 m lang, 1.6 m vor dem Patch),
+Haltelinie (durchgehend, 0.5 m) bei Stop/Ampel, gestrichelte Wartelinie bei „Kein Vortritt“; nur auf der Anfahrtsseite, aus denselben
+Ring-Sections wie der Strassenkörper (liegen exakt auf der Oberfläche). Fussgängerstreifen-Schild und Vortrittsschilder aus derselben Planung.
+
+**Ampeln.** Phasenplan automatisch: Arme, die ±30° gegenüberliegen, teilen eine Phase, alle anderen haben eine eigene; Reihenfolge nach Winkel.
+Pro Phase: Rot-Gelb 1 s (letzte Sekunde der Räumzeit) · Grün (Standard 20 s) · Gelb 3 s · Alles-Rot 2 s. Fussgänger über einen Arm haben
+Grün in allen Phasen, die diesen Arm nicht freigeben (1 s Verzögerung, 5 s Räumzeit vor Phasenende; abbiegender Verkehr ist
+bedingt verträglich). `SignalController.at(t)` ist eine **reine Funktion der Zeit** (Server-/Spielzeit, Test), Versatz pro Knoten aus der
+Knoten-ID. Modi: Festzeit, gelb blinkend, aus. `SignalLayer`: pro Knoten ein Mesh für Masten/Gehäuse und eines für die Lampen
+(Vertexfarben, nur bei Zustandswechsel neu geschrieben); `update(sekunden, camera)`.
+
+**Trottoir-Ecken & Fahrbahnbreite.** Neu: `ProfileData.carriageHalfWidth` (Fahrstreifen, Parkfeld, Bankett; ohne Bordstein/Trottoir).
+Layout und Patch der Kreuzung verwenden diese statt der `core`-Breite — der Patch deckt nur noch die Fahrbahn. Entlang des Patch-Randes
+läuft pro Ecke ein Trottoir-Streifen (`network/pavement.ts`, `mesh/junctionPavement.ts`): Bordsteinfläche, Trottoir-Oberseite, Schürze bis
+zum Terrain; er läuft um Rundungen, Spitzen und über die geraden Lücken zwischen fluchtenden Armen und verjüngt sich auf 0, wenn nur ein
+Nachbar ein Trottoir hat. Gefundener und behobener Fehler: `profileHeightAt` lieferte auf einer senkrechten Stufe (Bordstein) je nach Seite
+die obere oder untere Höhe → Patch-Kante und Trottoir-Höhe an der linken Armseite waren um 12 cm versetzt (`profileHeightInside`).
+
+**Bekannte Grenzen:**
+- Fussgängerampeln zeigen nur Rot/Grün-Scheiben (kein Männchen-Symbol, kein Blinkgrün); keine Anforderungstaster, keine Abbiegepfeile/-phasen,
+  keine Linksabbieger-Konfliktmatrix (der Phasenplan kennt nur „gegenüber“ vs. „quer“), keine Koordination („grüne Welle“) zwischen Knoten.
+- Signale brauchen ≥ 3 Motorstrassen-Arme (Rang ≥ 2); sonst keine Ampel.
+- Pro Arm nur ein Signalkopf (rechts) — kein Gegenmast, kein Ausleger; Köpfe stehen neben dem Fahrbahnrand, nicht über der Fahrbahn.
+- Die gestrichelte Wartelinie ist ein Strich-Raster, nicht die genormten Haifischzähne; alle Masse sind Näherungen.
+- Das Trottoir folgt dem Patch-Rand: bei sehr engen Radien (Radius < Trottoirbreite) wird der Streifen schmal/degeneriert; Radien unter
+  ~2 m werden im Editor nicht verhindert. Zwischen Strassen mit unterschiedlichem Trottoir-Niveau gibt es keine Rampen/Absenkungen.
+- Der Patch hat noch keine Fahrspur-Führungslinien (Abbiegepfeile, Leitlinien durch die Kreuzung).
+- Kreisel, Auf-/Abfahrten: Phase 11.
 
 ---
 
@@ -569,7 +610,7 @@ Jede Phase endet mit etwas **Sichtbarem und Lauffähigem** in der Demo (gegen da
 | 4 | **Netzwerk + Kreuzungen** ✅ | Graph, Y/T/X-Kreuzungen, Profilübergänge, Sackgasse |
 | 5 | **Oberflächen & Markierungen** ✅ | Material-Registry + prozedurale Materialien (austauschbar), Verschleiß-Layer, Markierungen, alle Basis-Presets (Wanderweg → Autobahn) |
 | 6 | **Props** ✅ | Scatter-System, Leitplanken (+Auto-Regel), Laternen, Schilder (SSV), Vortrittsschilder automatisch |
-| 7 | **Ampeln** | Signalgruppen, automatischer Phasenplan, Fußgängerstreifen, Haltelinien |
+| 7 | **Ampeln** ✅ | Signalgruppen, automatischer Phasenplan, Fußgängerstreifen, Haltelinien |
 | 8 | **Brücken** | Balken/Bogen/Viadukt, Pfeiler bis Terrain, Widerlager, Geländer, Flusskreuzungs-Vorschlag |
 | 9 | **Tunnel** | Röhre, Portal-Fassade, Portal-Graben (Carve), Überdeckungs-Validierung, Beleuchtung, Galerien |
 | 10 | **Terrain-Modifier** | `TerrainModifier`-Interface, `RoadTerrainModifier` (Absenken + Anheben), Patch-Vorschlag für `StreamTerrain`, Böschungs-Skirts |

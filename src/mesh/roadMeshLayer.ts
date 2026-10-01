@@ -13,6 +13,8 @@ import type { MaterialRegistry } from '../surface/materials';
 import { buildChunkGeometry, DEFAULT_EXTRUDE_OPTIONS, type ExtrudeOptions } from './extrude';
 import { buildJunctionGeometry } from './junctionMesh';
 import { buildChunkMarkings } from './markings';
+import { buildJunctionMarkings } from './junctionMarkings';
+import { buildJunctionPavements } from './junctionPavement';
 
 /** markings live in the same per-owner mesh map under an offset index */
 const MARKING_INDEX = 1_000_000;
@@ -88,6 +90,10 @@ export class RoadMeshLayer {
     if (!j.patch) return;
     const { geometry, materials } = buildJunctionGeometry(j.patch);
     this.put(j, 0, geometry, materials);
+    const marks = buildJunctionMarkings(j);
+    if (marks) this.put(j, 1, marks.geometry, marks.materials);
+    const pave = buildJunctionPavements(j.patch);
+    if (pave) this.put(j, 2, pave.geometry, pave.materials);
     this.dropRetired(`j:${j.id}`);
   }
 

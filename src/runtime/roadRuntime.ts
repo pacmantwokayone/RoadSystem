@@ -156,7 +156,7 @@ export class RoadRuntime {
   }
 
   /** Cross-section at a road end: centre (at design height), frame, and the carriageway half width. */
-  endCross(end: End): { index: number; pos: Vector3; frame: Frame; halfCore: number; widthScale: number } {
+  endCross(end: End): { index: number; pos: Vector3; frame: Frame; halfCore: number; halfCarriage: number; widthScale: number } {
     const index = this.endIndex(end);
     const s = this.samples[index];
     return {
@@ -164,6 +164,7 @@ export class RoadRuntime {
       pos: new Vector3(s.pos.x, this.designY[index], s.pos.z),
       frame: this.designFrame(index),
       halfCore: this.profile.coreHalfWidth * s.widthScale,
+      halfCarriage: this.profile.carriageHalfWidth * s.widthScale,
       widthScale: s.widthScale,
     };
   }

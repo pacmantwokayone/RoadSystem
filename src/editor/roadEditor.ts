@@ -18,7 +18,7 @@ import { isFixedPoint, type NodeDef, type RoadDef, type RoadPoint } from '../net
 import { armsByNode, type End } from '../network/graph';
 import { RoadModel, type ModelEvent } from './model';
 import { nearestRoad, pointAtS, projectOnRoad } from './pathTools';
-import { connectEnd, defaultIds, dissolveNode, findConnectTarget, moveNode, setNodeRadius, type ConnectTarget } from './ops';
+import { connectEnd, defaultIds, dissolveNode, findConnectTarget, moveNode, setNodeRadius, setNodeSettings, type ConnectTarget, type NodeSettings } from './ops';
 import { PRESET_SOURCES } from '../profile/presets';
 
 export interface EditorHost {
@@ -333,6 +333,11 @@ export class RoadEditor {
   setNodeRadius(radius: number): void {
     const id = this.state.nodeId;
     if (id) this.model.transact('Kurvenradius ändern', (d) => setNodeRadius(d, id, radius), `radius:${id}`);
+  }
+
+  setNodeSettings(patch: Partial<NodeSettings>): void {
+    const id = this.state.nodeId;
+    if (id) this.model.transact('Kreuzung einstellen', (d) => setNodeSettings(d, id, patch), `nodeset:${id}:${Object.keys(patch).join(',')}`);
   }
 
   dissolveSelectedNode(): void {

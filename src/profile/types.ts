@@ -10,6 +10,10 @@ export interface ProfilePoint {
   y: number;
 }
 
+/** segment kinds that carry vehicles (what a junction patch has to cover) and the part of them with driving lanes */
+export const ROADWAY_KINDS: ReadonlySet<string> = new Set(['lane', 'rut', 'parking', 'shoulder', 'median']);
+export const LANE_KINDS: ReadonlySet<string> = new Set(['lane', 'rut']);
+
 export interface ProfileSegment {
   material: string;
   /** free-form role: 'lane' | 'shoulder' | 'verge' | 'ditch' | 'curb' | 'path' … (queries, props, lane graph) */
@@ -70,6 +74,8 @@ export interface ProfileData {
   smoothRadiusM?: number;
   /** half width of the carriageway footprint (segments with core = true) */
   coreHalfWidth: number;
+  /** half width of what vehicles drive on (lanes, parking, shoulder): `coreHalfWidth` without kerbs and pavements; equals it for paths */
+  carriageHalfWidth: number;
   /** half width of the whole cross-section */
   outerHalfWidth: number;
   vary?: (ctx: VaryContext) => VaryResult;
@@ -102,4 +108,10 @@ export function profileHeightAt(profile: ProfileData, x: number): number {
     }
   }
   return pts[pts.length - 1].y;
+}
+
+/** Height at lateral x, taken from the inside (towards the axis) when x lies exactly on a vertical step such as a kerb —
+ *  `profileHeightAt` picks whichever neighbouring segment comes first in x order, which differs between the two sides. */
+export function profileHeightInside(profile: ProfileData, x: number): number {
+  return profileHeightAt(profile, x - Math.sign(x) * 1e-4);
 }

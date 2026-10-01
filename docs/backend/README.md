@@ -31,7 +31,7 @@ GET  roadlib-save.php                     200 { profiles: { name: source }, mate
 POST roadlib-save.php                     Body { profiles, materials?, baseRevision? }  (Antworten wie oben)
 ```
 
-- `nodes` = Kreuzungen (`{ id, x, y, z, radius? }`); Straßen verweisen per `startNode`/`endNode` darauf. Beides gehört in dasselbe Dokument
+- `nodes` = Kreuzungen (`{ id, x, y, z, radius?, control?, crosswalks?, signalMode?, greenS? }` — die letzten vier steuern Vortritt, Fussgängerstreifen und Ampeln, siehe `docs/PLAN.md` 2h; der Server speichert sie unverändert, der Client validiert beim Laden); Straßen verweisen per `startNode`/`endNode` darauf. Beides gehört in dasselbe Dokument
   und dieselbe Revision, damit ein Speichern nie ein halbes Netz hinterlässt.
 - `baseRevision` = die Revision, auf der die Änderung des Editors beruht. Fehlt sie, wird überschrieben
   (der Editor sendet das erst, nachdem der Benutzer einen Konflikt bestätigt hat).

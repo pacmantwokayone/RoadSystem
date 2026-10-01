@@ -10,7 +10,7 @@
 //       .ditch(1.4, 0.35, 'grass'))
 
 import { makeGuardrail, makeScatter, type GuardrailOpts, type PropRule, type PropSide, type ScatterOpts } from '../props/rules';
-import type { MarkingDef, ProfileData, ProfilePoint, ProfileSegment, VaryContext, VaryResult } from './types';
+import { ROADWAY_KINDS, type MarkingDef, type ProfileData, ProfilePoint, ProfileSegment, VaryContext, VaryResult } from './types';
 
 export interface SurfaceOpts {
   /** rise over run going OUTWARD (negative = falls away from the centre) */
@@ -225,11 +225,13 @@ export class ProfileBuilder {
 
     let core = 0;
     let outer = 0;
+    let carriage = 0;
     segments.forEach((seg, k) => {
       const a = Math.abs(points[k].x);
       const b = Math.abs(points[k + 1].x);
       outer = Math.max(outer, a, b);
       if (seg.core) core = Math.max(core, a, b);
+      if (ROADWAY_KINDS.has(seg.kind)) carriage = Math.max(carriage, a, b);
     });
 
     return {
@@ -243,6 +245,7 @@ export class ProfileBuilder {
       rank: this._rank ?? Math.round(core * 2),
       smoothRadiusM: this._smooth,
       coreHalfWidth: core,
+      carriageHalfWidth: carriage > 0 ? Math.min(carriage, core || carriage) : core,
       outerHalfWidth: outer,
       vary: this._vary,
     };

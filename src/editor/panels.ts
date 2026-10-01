@@ -143,13 +143,13 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
     const sel = editor.state.roadId;
     const nsel = editor.state.nodeId;
     const nodes = editor.model.nodeList;
-    const nodeKey = nodes.map((n) => `${n.id}:${n.radius ?? ''}:${editor.nodeArms(n.id).length}`).join('|') + `#${nsel}`;
+    const nodeKey = nodes.map((n) => `${n.id}:${n.radius ?? ''}:${n.control ?? ''}:${editor.nodeArms(n.id).length}`).join('|') + `#${nsel}`;
     if (nodeKey !== nodeListKey) {
       nodeListKey = nodeKey;
       nodeListEl.replaceChildren(
         ...(nodes.length ? [h('div', { class: 'rse-h', style: 'margin:2px 0' }, 'Kreuzungen')] : []),
         ...nodes.map((n, i) => h('div', { class: `rse-item${n.id === nsel ? ' sel' : ''}`, on: { click: () => editor.selectNode(n.id) } },
-          h('span', {}, `Kreuzung ${i + 1}`), h('small', {}, `${editor.nodeArms(n.id).length} Arme · R ${(n.radius ?? 6).toFixed(1)} m`))),
+          h('span', {}, `Kreuzung ${i + 1}`), h('small', {}, `${editor.nodeArms(n.id).length} Arme · R ${(n.radius ?? 6).toFixed(1)} m${n.control === 'signals' ? ' · Ampel' : ''}`))),
       );
     }
     const nk = editor.model.list.map((r) => `${r.id}:${r.name}:${r.profile}`).join('|') + `#${sel}`;
@@ -163,7 +163,7 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
     const road = editor.selectedRoad;
     const node = editor.selectedNode;
     const ik = node
-      ? `node|${node.id}|${editor.nodeArms(node.id).map((a) => a.roadId + a.end).join(',')}`
+      ? `node|${node.id}|${node.control ?? ''}|${editor.nodeArms(node.id).map((a) => a.roadId + a.end).join(',')}`
       : road ? `${road.id}|${road.profile}|${editor.state.pointIndex}|${road.points.length}|${library.names().join(',')}` : 'none';
     if (ik !== inspKey) {
       inspKey = ik;
@@ -173,6 +173,13 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
         inspector.append(
           h('div', { class: 'rse-h' }, 'Kreuzung'),
           numberRow('Kurvenradius (m)', () => editor.selectedNode?.radius ?? 6, (v) => editor.setNodeRadius(v), { min: 1, max: 25, step: 0.5, slider: true, fmt: (v) => v.toFixed(1) }),
+          selectRow('Vortritt', [['auto', 'automatisch (Rang)'], ['none', 'keine (Rechtsvortritt)'], ['stop', 'Stop'], ['yield', 'Kein Vortritt'], ['signals', 'Ampel']],
+            () => editor.selectedNode?.control ?? 'auto', (v) => { editor.setNodeSettings({ control: v }); inspKey = ''; }),
+          selectRow('Fussgängerstreifen', [['auto', 'automatisch'], ['none', 'keine'], ['all', 'überall']], () => editor.selectedNode?.crosswalks ?? 'auto', (v) => editor.setNodeSettings({ crosswalks: v })),
+          ...(node.control === 'signals' ? [
+            selectRow('Ampelmodus', [['fixed', 'Festzeit'], ['flashing', 'gelb blinkend'], ['off', 'aus']], () => editor.selectedNode?.signalMode ?? 'fixed', (v) => editor.setNodeSettings({ signalMode: v })),
+            numberRow('Grünzeit (s)', () => editor.selectedNode?.greenS ?? 20, (v) => editor.setNodeSettings({ greenS: v }), { min: 5, max: 60, step: 1, slider: true, fmt: (v) => v.toFixed(0) }),
+          ] : []),
           h('div', { class: 'rse-h' }, 'Arme'),
           ...editor.nodeArms(node.id).map((a) => h('div', { class: 'rse-item', on: { click: () => editor.selectRoad(a.roadId) } }, h('span', {}, a.name), h('small', {}, a.end === 'start' ? 'Anfang' : 'Ende'))),
           h('div', { class: 'rse-hint', style: 'margin-top:6px' }, 'Marker ziehen verschiebt die Kreuzung samt aller Straßen. Ein freies Straßenende auf die Marker, ein anderes Ende oder eine andere Straße ziehen verbindet sie.'),

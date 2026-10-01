@@ -114,7 +114,7 @@ export class RoadSystem {
         const sign = a.end === 'start' ? 1 : -1;
         const l = Math.hypot(t.x, t.z) || 1;
         const pt = a.end === 'start' ? def.points[0] : def.points[def.points.length - 1];
-        return { dir: { x: (sign * t.x) / l, z: (sign * t.z) / l }, halfWidth: prof.coreHalfWidth * (pt.widthScale ?? 1) };
+        return { dir: { x: (sign * t.x) / l, z: (sign * t.z) / l }, halfWidth: prof.carriageHalfWidth * (pt.widthScale ?? 1) };
       });
       const layout = layoutJunction(specs, node.radius ?? DEFAULT_CORNER_RADIUS_M);
       layouts.set(nodeId, { layout, arms });

@@ -36,7 +36,24 @@ export interface NodeDef {
   z: number;
   /** curb radius of the rounded corners, metres (default DEFAULT_CORNER_RADIUS_M) */
   radius?: number;
+  /** who has right of way: 'auto' = from the roads' ranks (default), 'none' = unmarked (Rechtsvortritt), 'stop' / 'yield' = all
+   * lower-ranked arms (every arm when the ranks are equal) get Stop / Kein Vortritt, 'signals' = traffic lights */
+  control?: JunctionControl;
+  /** zebra crossings: 'auto' (village streets with pavements), 'none', 'all' (every road arm) */
+  crosswalks?: CrosswalkMode;
+  /** traffic lights: 'fixed' time plan (default), 'flashing' yellow, or 'off' */
+  signalMode?: SignalMode;
+  /** green time per phase, seconds (default DEFAULT_GREEN_S) */
+  greenS?: number;
 }
+
+export type JunctionControl = 'auto' | 'none' | 'stop' | 'yield' | 'signals';
+export type CrosswalkMode = 'auto' | 'none' | 'all';
+export type SignalMode = 'fixed' | 'flashing' | 'off';
+export const JUNCTION_CONTROLS: readonly JunctionControl[] = ['auto', 'none', 'stop', 'yield', 'signals'];
+export const CROSSWALK_MODES: readonly CrosswalkMode[] = ['auto', 'none', 'all'];
+export const SIGNAL_MODES: readonly SignalMode[] = ['fixed', 'flashing', 'off'];
+export const DEFAULT_GREEN_S = 20;
 
 export const DEFAULT_CORNER_RADIUS_M = 6;
 

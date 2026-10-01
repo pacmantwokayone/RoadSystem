@@ -2,7 +2,10 @@
 // untrusted input (hand-edited JSON, older versions, partial saves): everything
 // is coerced into a valid RoadsDocument, never thrown on.
 
-import { ROAD_POINTS_MAX, ROADS_DOC_VERSION, type ElevationMode, type NodeDef, type RoadDef, type RoadMode, type RoadPoint, type RoadsDocument } from './types';
+import {
+  CROSSWALK_MODES, DEFAULT_GREEN_S, JUNCTION_CONTROLS, ROAD_POINTS_MAX, ROADS_DOC_VERSION, SIGNAL_MODES,
+  type CrosswalkMode, type ElevationMode, type JunctionControl, type NodeDef, type SignalMode, type RoadDef, type RoadMode, type RoadPoint, type RoadsDocument,
+} from './types';
 import { normalizeNetwork } from './graph';
 
 const MODES: RoadMode[] = ['road', 'bridge', 'tunnel', 'gallery'];
@@ -54,6 +57,12 @@ export function sanitizeNode(raw: unknown): NodeDef | null {
   const n: NodeDef = { id: raw.id, x, y, z };
   const r = num(raw.radius);
   if (r !== undefined) n.radius = Math.min(40, Math.max(0.5, r));
+  // non-default settings only; unknown values are dropped
+  if (typeof raw.control === 'string' && (JUNCTION_CONTROLS as readonly string[]).includes(raw.control) && raw.control !== 'auto') n.control = raw.control as JunctionControl;
+  if (typeof raw.crosswalks === 'string' && (CROSSWALK_MODES as readonly string[]).includes(raw.crosswalks) && raw.crosswalks !== 'auto') n.crosswalks = raw.crosswalks as CrosswalkMode;
+  if (typeof raw.signalMode === 'string' && (SIGNAL_MODES as readonly string[]).includes(raw.signalMode) && raw.signalMode !== 'fixed') n.signalMode = raw.signalMode as SignalMode;
+  const g = num(raw.greenS);
+  if (g !== undefined && Math.round(g) !== DEFAULT_GREEN_S) n.greenS = Math.min(120, Math.max(5, g));
   return n;
 }
 

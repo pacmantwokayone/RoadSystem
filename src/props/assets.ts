@@ -38,7 +38,27 @@ function tree(trunkH: number, crown: THREE.BufferGeometry, crownY: number, light
   ];
 }
 
+/** Lamp positions (asset-local, the housing's front faces +z) of the traffic-light assets — the signal layer
+ *  draws the lit discs itself so it can switch their colour at run time. */
+export const SIGNAL_LAMPS = {
+  signal_car: [{ id: 'r', y: 3.6 }, { id: 'y', y: 3.3 }, { id: 'g', y: 3.0 }].map((l) => ({ ...l, x: 0, z: 0.235, r: 0.1 })),
+  signal_ped: [{ id: 'r', y: 2.48 }, { id: 'g', y: 2.14 }].map((l) => ({ ...l, x: 0, z: 0.225, r: 0.09 })),
+} as const;
+
 export const BUILTIN_ASSETS: Record<string, PropAssetDef> = {
+  signal_car: {
+    build: () => [
+      { geometry: cyl(0.06, 0.07, 3.9, 0, 8), material: 'steel_dark' },
+      { geometry: box(0.34, 1.16, 0.25, 0, 3.3, 0.1), material: 'plastic_black' },
+      ...SIGNAL_LAMPS.signal_car.map((l) => ({ geometry: box(0.3, 0.02, 0.1, 0, l.y + l.r + 0.02, 0.28), material: 'plastic_black' })), // hoods
+    ],
+  },
+  signal_ped: {
+    build: () => [
+      { geometry: cyl(0.05, 0.06, 2.7, 0, 8), material: 'steel_dark' },
+      { geometry: box(0.3, 0.7, 0.22, 0, 2.3, 0.1), material: 'plastic_black' },
+    ],
+  },
   post_steel: { build: () => [{ geometry: box(0.1, 1.3, 0.06, 0, 0.2, 0), material: 'steel_dark' }] },
   post_wood: { build: () => [{ geometry: box(0.14, 1.5, 0.14, 0, 0.3, 0), material: 'wood' }] },
   post_cable: { build: () => [{ geometry: box(0.06, 1.2, 0.06, 0, 0.25, 0), material: 'steel_dark' }] },

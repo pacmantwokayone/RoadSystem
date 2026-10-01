@@ -2,7 +2,7 @@
 // compound edit — split a road, create a node, connect roads — is one undoable transaction).
 
 import type { SampledRoad } from '../core/sampling';
-import { DEFAULT_CORNER_RADIUS_M, type NodeDef, type RoadDef } from '../network/types';
+import { DEFAULT_CORNER_RADIUS_M, DEFAULT_GREEN_S, type CrosswalkMode, type JunctionControl, type NodeDef, type RoadDef, type SignalMode } from '../network/types';
 import type { End } from '../network/graph';
 import { simToThree } from '../core/world';
 import type { NetworkDraft } from './model';
@@ -92,6 +92,23 @@ export function moveNode(d: NetworkDraft, nodeId: string, x: number, y: number, 
 export function setNodeRadius(d: NetworkDraft, nodeId: string, radius: number): void {
   d.editNode(nodeId, (n) => {
     if (Math.abs(radius - DEFAULT_CORNER_RADIUS_M) < 1e-9) delete n.radius; else n.radius = radius;
+  });
+}
+
+export interface NodeSettings {
+  control: JunctionControl;
+  crosswalks: CrosswalkMode;
+  signalMode: SignalMode;
+  greenS: number;
+}
+
+/** Sets junction behaviour; values equal to the default are removed so saved documents stay small. */
+export function setNodeSettings(d: NetworkDraft, nodeId: string, patch: Partial<NodeSettings>): void {
+  d.editNode(nodeId, (n) => {
+    if (patch.control !== undefined) { if (patch.control === 'auto') delete n.control; else n.control = patch.control; }
+    if (patch.crosswalks !== undefined) { if (patch.crosswalks === 'auto') delete n.crosswalks; else n.crosswalks = patch.crosswalks; }
+    if (patch.signalMode !== undefined) { if (patch.signalMode === 'fixed') delete n.signalMode; else n.signalMode = patch.signalMode; }
+    if (patch.greenS !== undefined) { if (Math.round(patch.greenS) === DEFAULT_GREEN_S) delete n.greenS; else n.greenS = Math.min(120, Math.max(5, patch.greenS)); }
   });
 }
 
