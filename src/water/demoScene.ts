@@ -5,7 +5,11 @@
 import { autoLevelRiver } from './autolevel';
 import type { NodeDef, RoadDef, RoadPoint } from '../network/types';
 import { buildRoundabout } from '../network/roundabout';
+import { buildStackInterchange } from '../network/interchange';
 import type { LakeDef, RiverDef, RiverPoint } from './types';
+
+/** level ground on the plateau for the motorway interchange */
+export const INTERCHANGE_PAD = { x: 2700, z: 2150, flat: 640, blend: 280, y: 1198 } as const;
 
 /** the level ground of the road test field */
 export const TRAFFIC_PAD = { x: 4380, z: 2350, flat: 700, blend: 380, y: 782 } as const;
@@ -49,7 +53,10 @@ export function valleyHeight(x: number, z: number): number {
   // a level basin for the town and the motorway (see waterDemoNetwork)
   const pad = TRAFFIC_PAD;
   const w = 1 - smooth(pad.flat, pad.flat + pad.blend, Math.hypot(x - pad.x, z - pad.z));
-  return h + (pad.y - h) * w;
+  const p2 = INTERCHANGE_PAD;
+  const w2 = 1 - smooth(p2.flat, p2.flat + p2.blend, Math.hypot(x - p2.x, z - p2.z));
+  const flat = h + (pad.y - h) * w;
+  return flat + (p2.y - flat) * w2;
 }
 
 const P = (x: number, z: number, extra: Partial<RiverPoint> = {}): RiverPoint => ({ x, y: 0, z, ...extra });
@@ -110,7 +117,8 @@ export const WATER_DEMO_VIEWS: Record<string, { label: string; cam: [number, num
   roundabout: { label: 'Kreisel', cam: [4230, 815, -2395, 4150, 783, -2480] },
   signals: { label: 'Ampelkreuzung', cam: [4605, 800, -2545, 4550, 783, -2480] },
   tee: { label: 'Dorf-T', cam: [4210, 800, -2150, 4150, 782, -2205] },
-  motorway: { label: 'Autobahn + Ausfahrt', cam: [4150, 835, -1880, 4380, 782, -2040] },
+  interchange: { label: 'Autobahnkreuz', cam: [2250, 1420, -1500, 2700, 1205, -2150] },
+  interchangeLow: { label: 'Kreuz (Boden)', cam: [2780, 1212, -2290, 2700, 1205, -2150] },
   tunnelEast: { label: 'Tunnelportal Ost', cam: [4075, 800, -2420, 3960, 788, -2480] },
   tunnelWest: { label: 'Tunnelportal West', cam: [3560, 850, -2520, 3640, 792, -2480] },
   confluence: { label: 'Zusammenfluss', cam: [3960, 830, -3090, 3900, 795, -3028] },
@@ -144,22 +152,18 @@ export function waterDemoNetwork(ground: (x: number, z: number) => number = wate
     ...rb.nodes,
     { id: 'sig', x: 4550, y: ground(4550, 2480), z: 2480, control: 'signals', crosswalks: 'all' },
     { id: 'tee', x: 4150, y: ground(4150, 2200), z: 2200 },
-    { id: 'ab', x: 4300, y: ground(4300, 1992), z: 1992, control: 'none' },
-    { id: 'ramp', x: 4550, y: ground(4550, 2262), z: 2262 },
   ];
   const roads: RoadDef[] = [
     ...rb.roads,
     // signalised crossing: the main road continues east, a village street crosses it
     { id: 'haupt-ost', name: 'Hauptstrasse (Ost)', profile: 'hauptstrasse', points: gs([[4550, 2480], [4700, 2480], [4860, 2510]]), startNode: 'sig' },
     { id: 'dorf-nord', name: 'Dorfstrasse (Nord)', profile: 'dorfstrasse', points: gs([[4550, 2720], [4550, 2600], [4550, 2480]]), endNode: 'sig' },
-    { id: 'dorf-sued', name: 'Dorfstrasse (Süd)', profile: 'dorfstrasse', points: gs([[4550, 2480], [4550, 2370], [4550, 2262]]), startNode: 'sig', endNode: 'ramp' },
+    { id: 'dorf-sued', name: 'Dorfstrasse (Süd)', profile: 'dorfstrasse', points: gs([[4550, 2480], [4550, 2370], [4550, 2262]]), startNode: 'sig' },
     // village T-junction
     { id: 'quartier-west', name: 'Quartierstrasse', profile: 'quartierstrasse', points: gs([[3900, 2200], [4030, 2200], [4150, 2200]]), endNode: 'tee' },
     { id: 'quartier-ost', name: 'Quartierstrasse (2)', profile: 'quartierstrasse', points: gs([[4150, 2200], [4270, 2206], [4400, 2216]]), startNode: 'tee' },
-    // motorway with an exit that leads up to the signalised crossing
-    { id: 'bahn-west', name: 'Autobahn', profile: 'autobahn', points: gs([[3750, 1980], [3950, 1985], [4130, 1990], [4300, 1992]]), endNode: 'ab' },
-    { id: 'bahn-ost', name: 'Autobahn (2)', profile: 'autobahn', points: gs([[4300, 1992], [4500, 2000], [4750, 2015], [5000, 2040]]), startNode: 'ab' },
-    { id: 'ausfahrt', name: 'Ausfahrt', profile: 'auffahrt', points: gs([[4300, 1992], [4385, 2030], [4470, 2100], [4528, 2190], [4550, 2262]]), startNode: 'ab', endNode: 'ramp' },
+    // a motorway interchange on the plateau: one motorway on the ground, one high above it on stilts, four flyover ramps
+    ...buildStackInterchange({ id: 'kreuz', x: INTERCHANGE_PAD.x, z: INTERCHANGE_PAD.z, ground, lift: 11, radius: 160, lengthA: 450, lengthB: 640, grade: 0.05 }).roads,
   ];
   return { roads, nodes };
 }

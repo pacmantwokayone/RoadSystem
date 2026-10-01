@@ -16,7 +16,7 @@ import { GeometryBatch } from '../props/batch';
 import type { Placement } from '../props/place';
 import { sidesOf } from '../props/rules';
 import { beam, box, circleRing, loft, rectRing, type Raw } from './primitives';
-import { bridgeSections, pierPositions, type BridgeSection } from './sections';
+import { bridgeSections, pierPositionsFor, type BridgeSection } from './sections';
 import type { BridgeData } from './types';
 
 export interface BridgeBuild {
@@ -230,7 +230,7 @@ function support(c: Ctx, s: number, topY: number, withCap: boolean): void {
 function piers(c: Ctx, sec: BridgeSection): void {
   const p = c.bridge.piers;
   if (!p || c.bridge.arch) return;
-  for (const s of pierPositions(sec, p.maxSpan)) {
+  for (const s of pierPositionsFor(c.rt, sec, p.maxSpan)) {
     if (!c.owns(s)) continue;
     support(c, s, c.deckBottom(s), true);
   }
@@ -292,7 +292,7 @@ function arch(c: Ctx, sec: BridgeSection): void {
   const A = c.bridge.arch;
   const P = c.bridge.piers;
   if (!A) return;
-  const supports = [sec.s0 + c.bridge.abutments.depth * 0.5, ...(P ? pierPositions(sec, P.maxSpan) : []), sec.s1 - c.bridge.abutments.depth * 0.5];
+  const supports = [sec.s0 + c.bridge.abutments.depth * 0.5, ...(P ? pierPositionsFor(c.rt, sec, P.maxSpan) : []), sec.s1 - c.bridge.abutments.depth * 0.5];
   const raw = c.raw(A.material);
   const groundAt = (s: number): number | null => {
     const q = c.sampler.point(s, 0, 0);

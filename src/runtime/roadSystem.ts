@@ -174,6 +174,7 @@ export class RoadSystem {
     // commit
     this.stale.clear();
     this.roads = nextRoads;
+    for (const rt of nextRoads) rt.siblings = () => this.roads;
     this.junctionList = nextJ;
     this.pending = [];
     for (const rt of nextRoads) for (const chunk of rt.chunks) if (chunk.state === 'pending') this.pending.push({ road: rt, chunk });

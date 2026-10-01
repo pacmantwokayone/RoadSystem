@@ -131,6 +131,9 @@ export class RoadRuntime {
     if (this.chunks.length === 0 && n >= 2) this.chunks.push({ index: 0, i0: 0, i1: n - 1, state: 'pending' });
   }
 
+  /** the other roads of the same system (bridge piers keep clear of roads that pass underneath); set by the RoadSystem */
+  siblings: () => readonly RoadRuntime[] = () => [];
+
   /** Design height at authored point k (falls back to its authored y until the chunk is built). */
   pointDesignY(k: number): number {
     const y = this.designY[this.sampled.pointSample[k]];

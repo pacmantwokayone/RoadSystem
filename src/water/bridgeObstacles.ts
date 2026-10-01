@@ -2,7 +2,7 @@
 // Reads the road system's bridge sections and the water field; used as WaterLayer's `externalObstacles`.
 
 import type { RoadSystem } from '../runtime/roadSystem';
-import { bridgeSections, pierPositions } from '../structures/sections';
+import { bridgeSections, pierPositionsFor } from '../structures/sections';
 import { flipZ } from '../core/world';
 import type { WaterSystem } from './system';
 import type { ExternalObstacle } from './riverMesh';
@@ -14,7 +14,7 @@ export function bridgePierObstacles(roads: RoadSystem, water: WaterSystem): (riv
       const piers = rt.bridge?.piers;
       if (!piers) continue;
       for (const sec of bridgeSections(rt)) {
-        for (const s of pierPositions(sec, piers.maxSpan)) {
+        for (const s of pierPositionsFor(rt, sec, piers.maxSpan)) {
           const p = rt.sampled.curve.pointAt(s);
           const hit = water.field.waterAt(p.x, flipZ(p.z));
           if (hit && hit.kind === 'river' && hit.id === riverId) out.push({ x: p.x, z: p.z, r: Math.max(0.6, piers.width / 2) });
