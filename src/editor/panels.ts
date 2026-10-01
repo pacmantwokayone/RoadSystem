@@ -28,23 +28,30 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
     h('button', { class: cls, title, on: { click: onClick } }, label);
   const bSelect = btn('Wählen', 'Straßen und Punkte wählen/verschieben', () => editor.setTool('select'));
   const bDraw = btn('Zeichnen (D)', 'Klicks aufs Gelände setzen Punkte · Enter fertig', () => editor.setTool(editor.state.tool === 'draw' ? 'select' : 'draw'));
+  const water = editor.water;
+  const bRiver = btn('Fluss (R)', 'Fluss zeichnen: Klicks setzen Punkte · Enter fertig', () => editor.setTool(editor.state.tool === 'river' ? 'select' : 'river'));
+  const bLake = btn('See (L)', 'See zeichnen: Klicks setzen die Uferpunkte · Enter schliesst', () => editor.setTool(editor.state.tool === 'lake' ? 'select' : 'lake'));
   const bUndo = btn('↶', 'Rückgängig (Strg+Z)', () => editor.undo());
   const bRedo = btn('↷', 'Wiederholen (Strg+Y)', () => editor.redo());
   const bSave = btn('Speichern', 'Auf dem Server speichern (Strg+S)', () => void editor.save(), 'primary');
   const bReload = btn('Neu laden', 'Vom Server neu laden', () => void editor.reload());
   const status = h('div', { class: 'rse-status' });
-  const bar = h('div', { class: 'rse-bar' }, bSelect, bDraw, h('span', { class: 'rse-sep' }), bUndo, bRedo, h('span', { class: 'rse-sep' }), bSave, bReload, status);
+  const bar = h('div', { class: 'rse-bar' }, bSelect, bDraw, ...(water ? [bRiver, bLake] : []), h('span', { class: 'rse-sep' }), bUndo, bRedo, h('span', { class: 'rse-sep' }), bSave, bReload, status);
 
   // ---- tabs ----
   const tabRoads = h('button', { class: 'on' }, 'Straßen');
   const tabProfile = h('button', {}, 'Profil (Code)');
   const tabMaterial = h('button', {}, 'Material');
   const tabBridge = h('button', {}, 'Brücke');
+  const tabWater = h('button', {}, 'Wasser');
+  const tabWaterStyle = h('button', {}, 'Wasser-Stil');
   const roadsBody = h('div', { class: 'rse-body' });
   const profileBody = h('div', { class: 'rse-body profile', style: { display: 'none' } });
   const materialBody = h('div', { class: 'rse-body profile', style: { display: 'none' } });
   const bridgeBody = h('div', { class: 'rse-body profile', style: { display: 'none' } });
-  type Tab = 'roads' | 'profile' | 'material' | 'bridge';
+  const waterBody = h('div', { class: 'rse-body', style: { display: 'none' } });
+  const waterStyleBody = h('div', { class: 'rse-body profile', style: { display: 'none' } });
+  type Tab = 'roads' | 'profile' | 'material' | 'bridge' | 'water' | 'waterStyle';
   let activeTab: Tab = 'roads';
   const showTab = (t: Tab): void => {
     activeTab = t;
@@ -52,20 +59,28 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
     tabProfile.classList.toggle('on', t === 'profile');
     tabMaterial.classList.toggle('on', t === 'material');
     tabBridge.classList.toggle('on', t === 'bridge');
+    tabWater.classList.toggle('on', t === 'water');
+    tabWaterStyle.classList.toggle('on', t === 'waterStyle');
     roadsBody.style.display = t === 'roads' ? '' : 'none';
     profileBody.style.display = t === 'profile' ? '' : 'none';
     materialBody.style.display = t === 'material' ? '' : 'none';
     bridgeBody.style.display = t === 'bridge' ? '' : 'none';
+    waterBody.style.display = t === 'water' ? '' : 'none';
+    waterStyleBody.style.display = t === 'waterStyle' ? '' : 'none';
     if (t === 'profile') { followSelection(); requestAnimationFrame(redrawPreview); } // preview needs layout, the editor doesn't
     if (t === 'material') renderMaterial(true);
     if (t === 'bridge') renderBridge(true);
+    if (t === 'water') renderWater();
+    if (t === 'waterStyle') renderWaterStyle(true);
   };
   tabRoads.onclick = () => showTab('roads');
   tabProfile.onclick = () => showTab('profile');
   tabMaterial.onclick = () => showTab('material');
   tabBridge.onclick = () => showTab('bridge');
+  tabWater.onclick = () => showTab('water');
+  tabWaterStyle.onclick = () => showTab('waterStyle');
 
-  const dock = h('div', { class: 'rse' }, bar, h('div', { class: 'rse-tabs' }, tabRoads, tabProfile, ...(editor.materialLibrary ? [tabMaterial] : []), ...(editor.bridgeLibrary ? [tabBridge] : [])), roadsBody, profileBody, materialBody, bridgeBody);
+  const dock = h('div', { class: 'rse' }, bar, h('div', { class: 'rse-tabs' }, tabRoads, tabProfile, ...(editor.materialLibrary ? [tabMaterial] : []), ...(editor.bridgeLibrary ? [tabBridge] : []), ...(water ? [tabWater, tabWaterStyle] : [])), roadsBody, profileBody, materialBody, bridgeBody, waterBody, waterStyleBody);
   root.append(dock);
 
   // ================= roads tab =================
@@ -434,25 +449,219 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
     if (force) renderProposals();
   }
 
+
+  // ================= water tab =================
+  const wList = h('div', { class: 'rse-list' });
+  const wInspector = h('div');
+  waterBody.append(
+    h('div', { class: 'rse-row two' }, h('span', {}, 'Neuer Fluss'), h('select', { on: { change: (e: Event) => { if (water) water.activeRiverStyle = (e.target as HTMLSelectElement).value; } } })),
+    h('div', { class: 'rse-row two' }, h('span', {}, 'Neuer See'), h('select', { on: { change: (e: Event) => { if (water) water.activeLakeStyle = (e.target as HTMLSelectElement).value; } } })),
+    h('div', { class: 'rse-h' }, 'Gewässer'), wList, wInspector,
+  );
+  const wRiverSel = waterBody.children[0].lastElementChild as HTMLSelectElement;
+  const wLakeSel = waterBody.children[1].lastElementChild as HTMLSelectElement;
+  let wListKey = '';
+  let wInspKey = '';
+  let wControls: Control[] = [];
+
+  function waterParamRow(key: string, def: ParamDef): HTMLElement {
+    const sel = (): Record<string, number | boolean | string> => (water?.selectedRiver ?? water?.selectedLake)?.params ?? {};
+    const cur = (): number | boolean | string => sel()[key] ?? def.default;
+    const label = def.label ?? key;
+    if (def.type === 'bool') {
+      const cb = h('input', { type: 'checkbox', checked: Boolean(cur()), on: { change: () => water?.setParam(key, cb.checked) } }) as HTMLInputElement;
+      controls.push({ sync: () => { cb.checked = Boolean(cur()); } });
+      return row(label, cb);
+    }
+    if (def.type === 'enum') return selectRow(label, (def.options ?? []).map((o) => [o, o] as [string, string]), () => String(cur()), (v) => water?.setParam(key, v));
+    return numberRow(label, () => Number(cur()), (v) => water?.setParam(key, v), { min: def.min, max: def.max, step: def.step ?? ('any' as unknown as number), slider: def.min !== undefined && def.max !== undefined });
+  }
+
+  function riverPointSection(idx: number): HTMLElement {
+    const pt = () => water?.selectedRiver?.points[idx] ?? { x: 0, y: 0, z: 0 };
+    const style = (): { width: number; depth: number } => { const r = water?.selectedRiver; const st = r ? water!.library.forRiver(r) : undefined; return { width: st?.width ?? 5, depth: st?.depth ?? 1 }; };
+    const box = h('div', {}, h('div', { class: 'rse-h' }, `Punkt ${idx + 1} / ${water?.selectedRiver?.points.length ?? 0}`));
+    const pos = h('span', { class: 'rse-val', style: { textAlign: 'left' } }, '');
+    box.append(h('div', { class: 'rse-row two' }, h('span', {}, 'Position x / z'), pos));
+    controls.push({ sync: () => { const p = pt(); pos.textContent = `${p.x.toFixed(1)} / ${p.z.toFixed(1)}`; } });
+    const last = (water?.selectedRiver?.points.length ?? 1) - 1;
+    box.append(
+      numberRow('Pegel y (m)', () => pt().y, (v) => water?.setPointAttr(idx, { y: v }), { step: 0.1, fmt: (v) => v.toFixed(1) }),
+      numberRow('Breite (m)', () => pt().width ?? style().width, (v) => water?.setPointAttr(idx, { width: v }), { min: 0.5, max: 80, step: 0.5, slider: true, fmt: (v) => v.toFixed(1) }),
+      numberRow('Tiefe (m)', () => pt().depth ?? style().depth, (v) => water?.setPointAttr(idx, { depth: v }), { min: 0.1, max: 20, step: 0.1, slider: true, fmt: (v) => v.toFixed(1) }),
+      ...(idx < last ? [selectRow('Abschnitt danach', [['river', 'Fluss'], ['rapids', 'Stromschnelle'], ['fall', 'Wasserfall']] as Array<['river' | 'rapids' | 'fall', string]>, () => pt().seg ?? 'river', (v) => { water?.setPointAttr(idx, { seg: v }); wInspKey = ''; })] : []),
+      h('div', { class: 'rse-actions' }, h('button', { class: 'danger', on: { click: () => water?.deleteSelectedPoint() } }, 'Punkt löschen (Entf)')),
+    );
+    return box;
+  }
+
+  function renderWater(): void {
+    if (!water || activeTab !== 'water') return;
+    const fill = (sel: HTMLSelectElement, names: string[], cur: string): void => {
+      if (sel.options.length !== names.length || Array.from(sel.options).some((o, i) => o.value !== names[i])) sel.replaceChildren(...names.map((n) => h('option', { value: n }, n)));
+      sel.value = names.includes(cur) ? cur : names[0];
+    };
+    fill(wRiverSel, water.library.namesOf('river'), water.activeRiverStyle);
+    fill(wLakeSel, water.library.namesOf('lake'), water.activeLakeStyle);
+    const sel = water.selection;
+    const rivers = editor.model.riverList, lakes = editor.model.lakeList;
+    const lk = rivers.map((r) => `r${r.id}:${r.name}:${r.style}`).join('|') + lakes.map((l) => `l${l.id}:${l.name}:${l.style}`).join('|') + `#${sel?.kind}${sel?.id}`;
+    if (lk !== wListKey) {
+      wListKey = lk;
+      wList.replaceChildren(
+        ...rivers.map((r) => h('div', { class: `rse-item${sel?.kind === 'river' && sel.id === r.id ? ' sel' : ''}`, on: { click: () => water.select('river', r.id) } }, h('span', {}, r.name), h('small', {}, `${r.style} · ${r.points.length} Pkt`))),
+        ...lakes.map((l) => h('div', { class: `rse-item${sel?.kind === 'lake' && sel.id === l.id ? ' sel' : ''}`, on: { click: () => water.select('lake', l.id) } }, h('span', {}, l.name), h('small', {}, `See · ${l.style}`))),
+      );
+      if (!rivers.length && !lakes.length) wList.append(h('div', { class: 'rse-hint' }, 'Noch keine Gewässer. „Fluss (R)“ oder „See (L)“ wählen und aufs Gelände klicken.'));
+    }
+    const river = water.selectedRiver, lake = water.selectedLake;
+    const ik = river
+      ? `r|${river.id}|${river.style}|${river.points.length}|${sel?.index}|${river.startLake ?? ''}|${river.endLake ?? ''}|${river.endRiver ?? ''}|${water.library.names().join(',')}|${lakes.length}|${rivers.length}`
+      : lake ? `l|${lake.id}|${lake.style}|${lake.outline.length}|${sel?.index}|${water.library.names().join(',')}` : 'none';
+    if (ik !== wInspKey) {
+      wInspKey = ik;
+      const saved = controls;
+      controls = wControls = [];
+      wInspector.replaceChildren();
+      if (!river && !lake) {
+        wInspector.append(h('div', { class: 'rse-hint' }, 'Fluss oder See anklicken. Punkte lassen sich ziehen; Umschalt+Klick (oder Doppelklick) fügt einen Punkt ein, Entf löscht ihn.'));
+      } else if (river) {
+        const nameInput = h('input', { type: 'text', value: river.name, on: { input: () => water.renameSelected(nameInput.value), change: () => editor.model.breakCoalesce() } }) as HTMLInputElement;
+        controls.push({ sync: () => { if (document.activeElement !== nameInput) nameInput.value = water.selectedRiver?.name ?? ''; } });
+        const info = h('div', { class: 'rse-hint' });
+        controls.push({ sync: () => {
+          const i = water.riverInfo(river.id);
+          info.textContent = i ? `${i.length.toFixed(0)} m · Abschnitte ${i.ready}/${i.chunks}${i.falls.length ? ' · Fälle: ' + i.falls.map((f) => `${f.height.toFixed(0)} m`).join(', ') : ''}` : '';
+        } });
+        wInspector.append(
+          h('div', { class: 'rse-h' }, 'Fluss'),
+          row('Name', nameInput),
+          selectRow('Stil', water.library.namesOf('river').map((n) => [n, n] as [string, string]), () => water.selectedRiver?.style ?? river.style, (v) => water.setStyle(v)),
+        );
+        for (const [k, def] of Object.entries(water.library.getSchema(river.style))) wInspector.append(waterParamRow(k, def));
+        const lakeOpts: Array<[string, string]> = [['', '—'], ...lakes.map((l) => [l.id, l.name] as [string, string])];
+        const riverOpts: Array<[string, string]> = [['', '—'], ...rivers.filter((r) => r.id !== river.id).map((r) => [r.id, r.name] as [string, string])];
+        wInspector.append(
+          h('div', { class: 'rse-h' }, 'Verbindungen'),
+          selectRow('Fliesst aus See', lakeOpts, () => water.selectedRiver?.startLake ?? '', (v) => water.setLinks({ startLake: v || null })),
+          selectRow('Mündet in See', lakeOpts, () => water.selectedRiver?.endLake ?? '', (v) => water.setLinks({ endLake: v || null })),
+          selectRow('Mündet in Fluss', riverOpts, () => water.selectedRiver?.endRiver ?? '', (v) => water.setLinks({ endRiver: v || null })),
+          info,
+          h('div', { class: 'rse-row two' }, h('span', {}, 'Pegel automatisch'), (() => { const cb = h('input', { type: 'checkbox', checked: water.autoLevel, on: { change: () => { water.autoLevel = cb.checked; } } }) as HTMLInputElement; return cb; })()),
+          h('div', { class: 'rse-actions' },
+            h('button', { title: 'Wasserspiegel aller Punkte aus dem Gelände setzen (nie bergauf)', on: { click: () => water.relevelSelected() } }, 'Pegel aus Terrain'),
+            h('button', { class: 'danger', on: { click: () => { if (confirm(`Fluss „${river.name}“ löschen?`)) water.deleteSelected(); } } }, 'Fluss löschen'),
+          ),
+        );
+        if (sel?.index !== undefined && sel.index < river.points.length) wInspector.append(riverPointSection(sel.index));
+        else wInspector.append(h('div', { class: 'rse-hint', style: 'margin-top:8px' }, 'Punkt-Handle anklicken: Breite, Tiefe und Abschnittsart (Fluss · Stromschnelle · Wasserfall) einstellen. Ein Wasserfall fällt vom gewählten Punkt bis zum nächsten – beliebig tief.'));
+      } else if (lake) {
+        const nameInput = h('input', { type: 'text', value: lake.name, on: { input: () => water.renameSelected(nameInput.value), change: () => editor.model.breakCoalesce() } }) as HTMLInputElement;
+        controls.push({ sync: () => { if (document.activeElement !== nameInput) nameInput.value = water.selectedLake?.name ?? ''; } });
+        const info = h('div', { class: 'rse-hint' });
+        controls.push({ sync: () => { const i = water.lakeInfo(lake.id); info.textContent = i ? `${(i.area / 10000).toFixed(2)} ha${i.ready ? '' : ' · wird gebaut…'}` : ''; } });
+        wInspector.append(
+          h('div', { class: 'rse-h' }, 'See'),
+          row('Name', nameInput),
+          selectRow('Stil', water.library.namesOf('lake').map((n) => [n, n] as [string, string]), () => water.selectedLake?.style ?? lake.style, (v) => water.setStyle(v)),
+        );
+        for (const [k, def] of Object.entries(water.library.getSchema(lake.style))) wInspector.append(waterParamRow(k, def));
+        wInspector.append(
+          numberRow('Pegel y (m)', () => water.selectedLake?.level ?? lake.level, (v) => water.setLake({ level: v }), { step: 0.1, fmt: (v) => v.toFixed(1) }),
+          numberRow('Tiefe (m)', () => water.selectedLake?.depth ?? lake.depth, (v) => water.setLake({ depth: v }), { min: 0.5, max: 120, step: 0.5, slider: true, fmt: (v) => v.toFixed(1) }),
+          info,
+          h('div', { class: 'rse-actions' },
+            h('button', { title: 'Pegel knapp unter das tiefste Ufer legen', on: { click: () => water.lakeLevelFromTerrain() } }, 'Pegel aus Terrain'),
+            h('button', { class: 'danger', on: { click: () => { if (confirm(`See „${lake.name}“ löschen?`)) water.deleteSelected(); } } }, 'See löschen'),
+          ),
+        );
+        if (sel?.index !== undefined && sel.index < lake.outline.length) wInspector.append(h('div', { class: 'rse-actions' }, h('button', { class: 'danger', on: { click: () => water.deleteSelectedPoint() } }, `Uferpunkt ${sel.index + 1} löschen (Entf)`)));
+        else wInspector.append(h('div', { class: 'rse-hint', style: 'margin-top:8px' }, 'Uferpunkte ziehen formt den See; Umschalt+Klick fügt einen Punkt ein. Flüsse, deren erster / letzter Punkt im See liegt, fliessen aus ihm / in ihn.'));
+      }
+      controls = saved;
+    }
+    const saved = controls;
+    controls = wControls;
+    for (const c of wControls) c.sync();
+    controls = saved;
+  }
+
+  // ================= water style tab =================
+  let waterStyleName = 'wildbach';
+  const wsSel = h('select', { on: { change: () => { waterStyleName = wsSel.value; renderWaterStyle(true); } } });
+  const wsInfo = h('div', { class: 'rse-swatch' });
+  const wsErr = h('div', { class: 'rse-err' });
+  const wsCodeHost = h('div', { class: 'rse-code' });
+  let wsCode: CodeEditorHandle | null = null;
+  const wsActions = h('div', { class: 'rse-actions', style: 'margin:0' },
+    h('button', { title: 'Kopie unter neuem Namen anlegen', on: { click: () => {
+      const n = prompt('Name des neuen Wasserstils:', `${waterStyleName}_2`);
+      if (!n || !water) return;
+      const r = water.duplicate(waterStyleName, n.trim());
+      if (!r.ok) { wsErr.textContent = r.error ?? ''; return; }
+      waterStyleName = n.trim(); renderWaterStyle(true);
+    } } }, 'Kopie …'),
+    h('button', { title: 'Standard-Code wiederherstellen', on: { click: () => { if (water?.resetToPreset(waterStyleName)) renderWaterStyle(true); } } }, 'Standard zurücksetzen'),
+  );
+  waterStyleBody.append(
+    h('div', { class: 'rse-row two', style: 'margin:0' }, h('span', {}, 'Wasserstil'), wsSel),
+    wsInfo, wsActions, wsCodeHost, wsErr,
+    h('div', { class: 'rse-hint' }, 'Ein Wasserstil beschreibt Farbe, Strömung, Schaum, Ufer, Felsen, Partikel und Wasserfall. Änderungen wirken sofort an allen Gewässern mit diesem Stil.'),
+  );
+
+  function renderWaterStyle(force = false): void {
+    if (!water || activeTab !== 'waterStyle') return;
+    const names = water.library.names();
+    if (force || wsSel.options.length !== names.length) wsSel.replaceChildren(...names.map((n) => h('option', { value: n }, n)));
+    if (!names.includes(waterStyleName)) waterStyleName = names[0];
+    wsSel.value = waterStyleName;
+    const st = water.library.resolve(waterStyleName);
+    wsInfo.textContent = `${st.kind === 'lake' ? 'See' : 'Fluss'} · ${st.width} × ${st.depth} m · Strömung ${st.flow.speed} m/s · Ufer ${st.banks.material}`;
+    wsInfo.style.borderLeftColor = `#${st.colors.shallow.toString(16).padStart(6, '0')}`;
+    const src = water.library.getSource(waterStyleName) ?? '';
+    if (!wsCode) {
+      wsCode = createCodeEditor(wsCodeHost, {
+        api: 'water', doc: src, materialNames: () => materials.names(),
+        onChange: (s) => {
+          const r = water.applySource(waterStyleName, s);
+          wsErr.textContent = r.ok ? '' : r.error ?? '';
+        },
+      });
+    } else if (force || (!wsCode.focused() && src !== wsCode.getValue() && !wsErr.textContent)) {
+      wsCode.setValue(src);
+      if (force) wsErr.textContent = '';
+    }
+  }
+
   // ================= glue =================
   function renderBar(): void {
     bSelect.classList.toggle('on', editor.state.tool === 'select');
     bDraw.classList.toggle('on', editor.state.tool === 'draw');
+    bRiver.classList.toggle('on', editor.state.tool === 'river');
+    bLake.classList.toggle('on', editor.state.tool === 'lake');
     bUndo.disabled = !editor.model.canUndo;
     bRedo.disabled = !editor.model.canRedo;
     bUndo.title = `Rückgängig${editor.model.undoLabel ? `: ${editor.model.undoLabel}` : ''} (Strg+Z)`;
     bRedo.title = `Wiederholen${editor.model.redoLabel ? `: ${editor.model.redoLabel}` : ''} (Strg+Y)`;
     bSave.textContent = editor.isDirty ? 'Speichern ●' : 'Speichern';
-    status.textContent = editor.state.status.text || (editor.state.tool === 'draw' ? 'Klick setzt Punkte · Enter = fertig · ⌫ = letzter Punkt · Esc = abbrechen' : '');
+    status.textContent = editor.state.status.text || (['draw', 'river', 'lake'].includes(editor.state.tool) ? 'Klick setzt Punkte · Enter = fertig · ⌫ = letzter Punkt · Esc = abbrechen' : '');
     status.className = `rse-status${editor.state.status.kind === 'error' ? ' err' : editor.state.status.kind === 'ok' ? ' ok' : ''}`;
   }
 
+  let lastWaterSel = '';
   const render = (): void => {
     renderBar();
     renderRoads();
     if (activeTab === 'profile') followSelection();
     if (activeTab === 'material') renderMaterial();
     if (activeTab === 'bridge') renderBridge();
+    if (activeTab === 'water') renderWater();
+    if (activeTab === 'waterStyle') renderWaterStyle();
+    // selecting a river or lake (a click in the viewport) brings up the water tab
+    const wsel = water?.selection ? `${water.selection.kind}:${water.selection.id}` : '';
+    if (wsel && wsel !== lastWaterSel && activeTab === 'roads') showTab('water');
+    if (editor.state.roadId || editor.state.nodeId) { if (activeTab === 'water' && wsel === '') showTab('roads'); }
+    lastWaterSel = wsel;
   };
   const off = editor.onState(render);
   const offLib = library.onChange(() => { if (activeTab === 'profile') renderProfile(); });
@@ -463,6 +672,7 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
     code?.destroy();
     matCode?.destroy();
     brCode?.destroy();
+    wsCode?.destroy();
     dock.remove();
   };
 }

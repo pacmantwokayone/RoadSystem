@@ -3,6 +3,7 @@
 // fall, a side stream that joins it, and a lower lake the river flows into. SIM coordinates.
 
 import { autoLevelRiver } from './autolevel';
+import type { RoadDef } from '../network/types';
 import type { LakeDef, RiverDef, RiverPoint } from './types';
 
 const smooth = (a: number, b: number, v: number): number => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
@@ -81,5 +82,17 @@ export const WATER_DEMO_VIEWS: Record<string, { label: string; cam: [number, num
   river: { label: 'Talfluss', cam: [4200, 860, -3160, 4200, 790, -3010] },
   step: { label: 'Kleiner Fall', cam: [3950, 820, -3070, 3995, 795, -3015] },
   lowerLake: { label: 'Unterer See', cam: [4640, 830, -3200, 4830, 764, -3010] },
+  bridge: { label: 'Brücke über den Fluss', cam: [4215, 822, -3090, 4150, 786, -3000] },
   confluence: { label: 'Zusammenfluss', cam: [3960, 830, -3090, 3900, 795, -3028] },
 };
+
+/** a road that crosses the valley river on a bridge (the bridge piers stand in the water); the deck clears the ground at both ends */
+export function waterDemoRoads(ground: (x: number, z: number) => number = waterDemoHeight): RoadDef[] {
+  const x = 4150;
+  const deck = Math.round((Math.max(ground(x, 2945), ground(x, 3055), ground(x, 3000) + 4) + 1.2) * 2) / 2;
+  const pts: Array<[number, boolean]> = [[2640, false], [2800, false], [2945, true], [3000, true], [3055, true], [3200, false], [3360, false]];
+  return [{
+    id: 'talstrasse', name: 'Talstrasse', profile: 'hauptstrasse', bridge: 'balkenbruecke',
+    points: pts.map(([z, bridge]) => (bridge ? { x, y: deck, z, mode: 'bridge' as const } : { x, y: ground(x, z), z })),
+  }];
+}

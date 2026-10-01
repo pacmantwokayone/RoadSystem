@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
   MockStreamTerrain, RoadSystem, RoadDebugLayer, RoadMeshLayer, PropLayer, SignalLayer, BridgeLayer, BridgeLibrary, GeometryBatch, placementMatrix, SIGN_CATALOG, ProfileLibrary, MaterialRegistry, MaterialLibrary,
   StorageStore, MemoryStore, type RoadDef, type RoadStore,
-  WaterLibrary, WaterSystem, WaterLayer, waterDemoHeight, waterDemoWaters, WATER_DEMO_VIEWS,
+  WaterLibrary, WaterSystem, WaterLayer, bridgePierObstacles, waterDemoHeight, waterDemoWaters, waterDemoRoads, WATER_DEMO_VIEWS,
 } from 'roadsystem';
 import { RoadEditor, mountEditorPanels } from 'roadsystem/editor';
 
@@ -86,13 +86,9 @@ signalLayer.group.visible = qp.get('props') !== '0';
 scene.add(signalLayer.group);
 const frozenT = qp.get('t') !== null ? Number(qp.get('t')) : null;
 const sigSpeed = Number(qp.get('sigspeed') ?? 1);
-const waterLayer = new WaterLayer(waterSystem, terrain, materials, { particles: qp.get('particles') !== '0', drawDistance: Number(qp.get('waterDist') ?? 2600) });
+const waterLayer = new WaterLayer(waterSystem, terrain, materials, { externalObstacles: bridgePierObstacles(system, waterSystem), particles: qp.get('particles') !== '0', drawDistance: Number(qp.get('waterDist') ?? 2600) });
 waterLayer.setLight(sun.position);
 scene.add(waterLayer.group);
-if (qp.get('water')) {
-  const w = waterDemoWaters();
-  waterSystem.setWaters(w.rivers, w.lakes);
-}
 const debug = new RoadDebugLayer(system, terrain);
 debug.group.visible = false;
 scene.add(debug.group);
@@ -139,12 +135,16 @@ const editor = new RoadEditor({
       return ray.intersectObjects(terrain.group.children.filter((c) => c.visible), false)[0]?.point ?? null;
     },
   },
-  system, library, materials, materialLibrary, bridgeLibrary, terrain, rivers: demoRivers, store, location: LOCATION, roadGroup: meshLayer.group,
+  system, library, materials, materialLibrary, bridgeLibrary, terrain, rivers: demoRivers, water: { system: waterSystem, library: waterLibrary, terrain }, store, location: LOCATION, roadGroup: meshLayer.group,
 });
 mountEditorPanels(editor, document.body, { library, materials });
 void (async () => {
   await editor.load();
-  if (!qp.get('water') && !editor.model.list.length && !(await store.loadRoads(LOCATION))) {
+  if (qp.get('water') && !editor.model.riverList.length && !editor.model.lakeList.length) {
+    const w = waterDemoWaters();
+    editor.model.load({ version: 1, roads: waterDemoRoads(), rivers: w.rivers, lakes: w.lakes });
+    editor.setStatus('Beispiel-Gewässer geladen – noch nicht gespeichert', 'info');
+  } else if (!qp.get('water') && !editor.model.list.length && !(await store.loadRoads(LOCATION))) {
     editor.model.load({ version: 1, roads: sampleRoads, nodes: sampleNodes });
     editor.setStatus('Beispielstraßen geladen – noch nicht gespeichert', 'info');
   }

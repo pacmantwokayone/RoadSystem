@@ -38,3 +38,36 @@ export function outlineBounds(pts: readonly LakePoint[]): { minX: number; minZ: 
   for (const p of pts) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z); }
   return { minX, minZ, maxX, maxZ };
 }
+
+/** where the segment a→b crosses the outline (the crossing nearest to a), or null */
+export function segmentOutlineCrossing(ax: number, az: number, bx: number, bz: number, outline: readonly LakePoint[]): { x: number; z: number; t: number } | null {
+  let best: { x: number; z: number; t: number } | null = null;
+  const dx = bx - ax, dz = bz - az;
+  for (let i = 0, j = outline.length - 1; i < outline.length; j = i++) {
+    const p = outline[j], q = outline[i];
+    const ex = q.x - p.x, ez = q.z - p.z;
+    const den = dx * ez - dz * ex;
+    if (Math.abs(den) < 1e-12) continue;
+    const t = ((p.x - ax) * ez - (p.z - az) * ex) / den;
+    const u = ((p.x - ax) * dz - (p.z - az) * dx) / den;
+    if (t >= 0 && t <= 1 && u >= 0 && u <= 1 && (!best || t < best.t)) best = { x: ax + dx * t, z: az + dz * t, t };
+  }
+  return best;
+}
+
+/**
+ * Cuts a river polyline where it enters / leaves a lake: the points inside the lake are dropped and the end lands exactly on the
+ * shore (so the river's water ends at the lake instead of running across it). Returns the points unchanged when nothing is inside.
+ */
+export function trimAtLake<T extends { x: number; z: number }>(points: readonly T[], outline: readonly LakePoint[], end: 'start' | 'end', make: (x: number, z: number, from: T) => T): T[] {
+  const pts = end === 'end' ? points.slice() : points.slice().reverse();
+  let keep = pts.length;
+  while (keep > 1 && pointInOutline(pts[keep - 1].x, pts[keep - 1].z, outline)) keep--;
+  if (keep === pts.length || keep < 1) return points.slice();
+  const a = pts[keep - 1], b = pts[keep];
+  const c = segmentOutlineCrossing(a.x, a.z, b.x, b.z, outline);
+  const out = pts.slice(0, keep);
+  if (c) out.push(make(c.x, c.z, a));
+  else out.push(make(b.x, b.z, b)); // no crossing found (touching): end where the first point inside is
+  return end === 'end' ? out : out.reverse();
+}

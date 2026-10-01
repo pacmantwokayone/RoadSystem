@@ -75,3 +75,4 @@ export * from './water/particles';
 export * from './water/waterLayer';
 export * from './water/autolevel';
 export * from './water/demoScene';
+export * from './water/bridgeObstacles';

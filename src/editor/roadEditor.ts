@@ -25,6 +25,7 @@ import { RoadModel, type ModelEvent } from './model';
 import { nearestRoad, pointAtS, projectOnRoad } from './pathTools';
 import { connectEnd, defaultIds, dissolveNode, findConnectTarget, moveNode, setNodeRadius, setNodeSettings, type ConnectTarget, type NodeSettings } from './ops';
 import { PRESET_SOURCES } from '../profile/presets';
+import { WaterEditor, type WaterEditorDeps } from './waterEditor';
 
 export interface EditorHost {
   scene: THREE.Scene;
@@ -57,9 +58,11 @@ export interface EditorDeps {
   roadGroup?: THREE.Object3D;
   /** ask the user; default window.confirm */
   confirm?: (message: string) => boolean;
+  /** rivers, lakes and waterfalls: when given, the editor draws and edits them (tools River / Lake, inspector, style code) */
+  water?: WaterEditorDeps;
 }
 
-export type Tool = 'select' | 'draw';
+export type Tool = 'select' | 'draw' | 'river' | 'lake';
 export type StatusKind = 'info' | 'ok' | 'error';
 
 export interface EditorState {
@@ -81,7 +84,7 @@ export class RoadEditor {
   readonly model = new RoadModel();
   readonly state: EditorState;
   readonly handles = new THREE.Group();
-  private readonly host: EditorHost;
+  readonly host: EditorHost;
   private readonly system: RoadSystem;
   private readonly library: ProfileLibrary;
   private readonly store: RoadStore;
@@ -90,6 +93,8 @@ export class RoadEditor {
   private readonly roadGroup: THREE.Object3D | undefined;
   readonly materialLibrary: MaterialLibrary | undefined;
   readonly bridgeLibrary: BridgeLibrary | undefined;
+  /** rivers / lakes / waterfalls (only with `deps.water`) */
+  readonly water: WaterEditor | undefined;
   private rivers: RiverLike[] = [];
   private readonly terrain: TerrainSource | null;
   readonly materials: MaterialRegistry;
@@ -144,6 +149,9 @@ export class RoadEditor {
     }));
     this.cleanups.push(this.system.onChunkReady(() => { this.handlesDirty = true; }));
     this.bindInput();
+    if (deps.water) this.water = new WaterEditor(this, deps.water); // after bindInput: road handles get the first pick
+    // the terrain under roads changes when water is carved into it: rebuild the roads that come near
+    if (this.water) this.cleanups.push(this.water.system.onTerrainChanged((rect) => { this.system.invalidateRect(rect); this.handlesDirty = true; }));
   }
 
   // ---- state / events ------------------------------------------------------
@@ -155,6 +163,20 @@ export class RoadEditor {
 
   private emit(): void {
     for (const cb of this.listeners) cb();
+  }
+
+  /** for the water editor and panels */
+  emitState(): void { this.emit(); }
+
+  markLibraryDirty(): void {
+    this.state.libraryDirty = true;
+    this.emit();
+  }
+
+  /** a water object is being selected: drop the road / junction selection */
+  deselectRoadStuff(): void {
+    this.state.roadId = undefined; this.state.pointIndex = undefined; this.state.nodeId = undefined;
+    this.handlesDirty = true;
   }
 
   setStatus(text: string, kind: StatusKind = 'info'): void {
@@ -179,10 +201,12 @@ export class RoadEditor {
         break;
       case 'reset':
         this.state.roadId = undefined; this.state.pointIndex = undefined; this.state.nodeId = undefined;
+        this.water?.clearSelection();
         break;
       case 'changed':
         // one sync per change: the system diffs by identity and rebuilds only what differs
         this.system.setNetwork(this.model.list, this.model.nodeList);
+        this.water?.sync();
         if (this.state.nodeId && !this.model.getNode(this.state.nodeId)) this.state.nodeId = undefined;
         this.handlesDirty = true;
         break;
@@ -199,6 +223,7 @@ export class RoadEditor {
       for (const [name, src] of Object.entries(lib.profiles)) this.library.setSource(name, src);
       for (const [name, src] of Object.entries(lib.materials ?? {})) this.materialLibrary?.setSource(name, src);
       for (const [name, src] of Object.entries(lib.bridges ?? {})) this.bridgeLibrary?.setSource(name, src);
+      for (const [name, src] of Object.entries(lib.waters ?? {})) this.water?.library.setSource(name, src);
       this.libraryRevision = lib.revision;
     }
     const doc = await this.store.loadRoads(this.location);
@@ -212,7 +237,7 @@ export class RoadEditor {
     let ok = true;
     if (this.state.libraryDirty) {
       ok = await this.saveWithConflict(
-        (base) => this.store.saveLibrary({ version: 1, profiles: this.library.allSources(), ...(this.materialLibrary ? { materials: this.materialLibrary.allSources() } : {}), ...(this.bridgeLibrary ? { bridges: this.bridgeLibrary.allSources() } : {}) }, base),
+        (base) => this.store.saveLibrary({ version: 1, profiles: this.library.allSources(), ...(this.materialLibrary ? { materials: this.materialLibrary.allSources() } : {}), ...(this.bridgeLibrary ? { bridges: this.bridgeLibrary.allSources() } : {}), ...(this.water ? { waters: this.water.library.allSources() } : {}) }, base),
         this.libraryRevision, 'Profile',
         (rev) => { this.libraryRevision = rev; this.state.libraryDirty = false; },
       );
@@ -257,11 +282,13 @@ export class RoadEditor {
     if (this.state.tool === tool) return;
     if (this.draft) this.cancelDraft();
     this.state.tool = tool;
-    this.host.domElement.style.cursor = tool === 'draw' ? 'crosshair' : '';
+    this.water?.toolChanged();
+    this.host.domElement.style.cursor = tool === 'select' ? '' : 'crosshair';
     this.emit();
   }
 
   selectRoad(id: string | undefined): void {
+    if (id !== undefined) this.water?.clearSelection();
     this.state.roadId = id;
     this.state.pointIndex = undefined;
     this.state.nodeId = undefined;
@@ -270,6 +297,7 @@ export class RoadEditor {
   }
 
   selectNode(id: string | undefined): void {
+    if (id !== undefined) this.water?.clearSelection();
     this.state.nodeId = id;
     this.state.roadId = undefined;
     this.state.pointIndex = undefined;
@@ -427,12 +455,12 @@ export class RoadEditor {
   }
 
   get hasRivers(): boolean {
-    return this.rivers.length > 0;
+    return this.rivers.length > 0 || this.model.riverList.length > 0;
   }
 
   /** Roads that cross a river without a bridge. */
   bridgeProposals(): BridgeProposal[] {
-    return suggestBridges(this.model.list, this.rivers, this.terrain);
+    return suggestBridges(this.model.list, [...this.rivers, ...(this.water?.riversForBridges() ?? [])], this.terrain);
   }
 
   /** Sets the bridge for a proposal — one undo step — and selects the road. */
@@ -621,6 +649,7 @@ export class RoadEditor {
       this.lastProgressEmit = now;
       this.emit();
     }
+    this.water?.update();
     if (this.handlesDirty) this.rebuildHandles();
     const cam = this.host.camera.position;
     for (const m of this.handleMeshes) m.scale.setScalar(Math.max(0.4, m.position.distanceTo(cam) * HANDLE_PX));
@@ -789,6 +818,10 @@ export class RoadEditor {
     if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); this.redo(); return; }
     if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); void this.save(); return; }
     if (mod) return;
+    if (this.state.tool === 'river' || this.state.tool === 'lake') return; // the water editor handles these
+    if (this.water?.hasSelection && this.state.tool === 'select' && !this.state.roadId && !this.state.nodeId) {
+      if (e.key === 'Delete' || e.key === 'Backspace' || e.key === 'Escape') return;
+    }
     if (e.key === 'd' || e.key === 'D') { this.setTool(this.state.tool === 'draw' ? 'select' : 'draw'); return; }
     if (this.state.tool === 'draw') {
       if (e.key === 'Enter') this.finishDraft();
@@ -804,6 +837,7 @@ export class RoadEditor {
     for (const c of this.cleanups) c();
     this.cleanups.length = 0;
     for (const m of [...this.handleMeshes, ...this.nodeMeshes]) (m.material as THREE.Material).dispose();
+    this.water?.dispose();
     this.host.scene.remove(this.handles);
     this.sphere.dispose();
     this.listeners.clear();

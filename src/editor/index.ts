@@ -7,3 +7,4 @@ export * from './profilePreview';
 export * from './roadEditor';
 export { mountEditorPanels, type PanelDeps } from './panels';
 export { createCodeEditor, type CodeEditorHandle } from './codeEditor';
+export * from './waterEditor';

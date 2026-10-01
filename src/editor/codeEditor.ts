@@ -44,6 +44,25 @@ const BRIDGE_METHODS: Completion[] = [
   { label: 'lerp', type: 'function', detail: '(a, b, t)' },
 ];
 
+const WATER_METHODS: Completion[] = [
+  { label: 'river', type: 'function', detail: "W.river(name)", info: 'Start a river style' },
+  { label: 'lake', type: 'function', detail: "W.lake(name)", info: 'Start a lake style' },
+  { label: 'size', type: 'method', detail: '(width, depth)', info: 'Default width and depth (metres); lakes: depth only matters' },
+  { label: 'colors', type: 'method', detail: '({ shallow, deep, foam, sky })', info: 'Water colours as hex numbers' },
+  { label: 'clarity', type: 'method', detail: '(0..1)', info: 'How far you can see into the water' },
+  { label: 'banks', type: 'method', detail: "({ width, slope, material, strip })", info: 'Bank shape: width and slope of the cut into the terrain, road material of the strip along the water' },
+  { label: 'flow', type: 'method', detail: '({ speed, ripple, turbulence, streaks })', info: 'Current speed, ripples, base churn, flow-direction streaks' },
+  { label: 'foam', type: 'method', detail: '({ edge, obstacles, rapids, fall })', info: 'Amount of white water at the shore, around rocks, on rapids and at waterfalls' },
+  { label: 'rocks', type: 'method', detail: '({ density, min, max, inWater, color })', info: 'Boulders per 100 m; those in the water make foam' },
+  { label: 'particles', type: 'method', detail: '({ flecks, size, spray, mist })', info: 'Flecks drifting with the current, spray and mist at falls and rapids' },
+  { label: 'fall', type: 'method', detail: '({ spread, poolDepth, poolRadius, streak, wallSlope })', info: 'Waterfall: spread of the sheet, plunge pool, streaks, gorge walls' },
+  { label: 'waves', type: 'method', detail: '({ height, scale, speed })', info: 'Lake waves' },
+  { label: 'clamp', type: 'function', detail: '(v, lo, hi)' },
+  { label: 'lerp', type: 'function', detail: '(a, b, t)' },
+  { label: 'mix', type: 'function', detail: '(a, b, t)', info: 'Blend two colours' },
+  { label: 'rgb', type: 'function', detail: '(r, g, b)', info: 'Colour from 0–255 components' },
+];
+
 const MATERIAL_METHODS: Completion[] = [
   ...['asphalt', 'gravel', 'dirt', 'grass', 'cobble', 'concrete', 'wood', 'stone', 'paint', 'flat'].map((k): Completion => ({ label: k, type: 'function', detail: '({ … })', info: `Surface kind '${k}'` })),
   { label: 'mix', type: 'function', detail: '(a, b, t)', info: 'Blend two colours' },
@@ -54,7 +73,7 @@ const MATERIAL_METHODS: Completion[] = [
 
 export interface CodeEditorOptions {
   /** which API to complete: profile code (`R`/builder) or material code (`M`) */
-  api?: 'profile' | 'material' | 'bridge';
+  api?: 'profile' | 'material' | 'bridge' | 'water';
   doc: string;
   materialNames: () => string[];
   onChange: (source: string) => void;
@@ -80,7 +99,7 @@ export function createCodeEditor(parent: HTMLElement, opts: CodeEditorOptions): 
       return { from: ctx.pos - str[2].length, options: opts.materialNames().map((label) => ({ label, type: 'constant' })), validFor: /^\w*$/ };
     }
     const dot = /\.(\w*)$/.exec(before);
-    if (dot) return { from: ctx.pos - dot[1].length, options: opts.api === 'material' ? MATERIAL_METHODS : opts.api === 'bridge' ? BRIDGE_METHODS : METHODS, validFor: /^\w*$/ };
+    if (dot) return { from: ctx.pos - dot[1].length, options: opts.api === 'material' ? MATERIAL_METHODS : opts.api === 'bridge' ? BRIDGE_METHODS : opts.api === 'water' ? WATER_METHODS : METHODS, validFor: /^\w*$/ };
     return null;
   };
 

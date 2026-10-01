@@ -58,6 +58,8 @@ export class RoadSystem {
   private inputRoads: readonly RoadDef[] = [];
   private inputNodes: readonly NodeDef[] = [];
 
+  /** roads whose terrain changed underneath them: rebuilt by the next diff even though their definition is the same */
+  private stale = new Set<string>();
   private chunkListeners = new Set<ChunkListener>();
   private removedListeners = new Set<RemovedListener>();
   private replacedListeners = new Set<ReplacedListener>();
@@ -140,7 +142,7 @@ export class RoadSystem {
       const prof = profiles.get(def.id)!;
       const bridge = this.resolveBridge(def, prof);
       const old = oldById.get(def.id);
-      if (old && old.def === def && old.profile === prof && old.bridge === bridge && old.trim.start === trim.start && old.trim.end === trim.end) {
+      if (old && old.def === def && old.profile === prof && old.bridge === bridge && old.trim.start === trim.start && old.trim.end === trim.end && !this.stale.has(def.id)) {
         nextRoads.push(old);
         continue;
       }
@@ -170,6 +172,7 @@ export class RoadSystem {
     const removedJ = this.junctionList.filter((j) => !layouts.has(j.id));
 
     // commit
+    this.stale.clear();
     this.roads = nextRoads;
     this.junctionList = nextJ;
     this.pending = [];
@@ -199,6 +202,21 @@ export class RoadSystem {
   /** Re-run the diff with the current inputs (after a profile's code changed, its resolved object differs). */
   refresh(): void {
     this.setNetwork(this.inputRoads, this.inputNodes);
+  }
+
+  /**
+   * The terrain changed inside `rect` (a river was carved, a lake dug …): every road whose points come near it is rebuilt from the
+   * new ground — the old meshes stay visible until the new ones are complete. Returns how many roads were affected.
+   */
+  invalidateRect(rect: { minX: number; minZ: number; maxX: number; maxZ: number }, marginM = 60): number {
+    let n = 0;
+    for (const def of this.inputRoads) {
+      let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+      for (const p of def.points) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z); }
+      if (minX - marginM <= rect.maxX && maxX + marginM >= rect.minX && minZ - marginM <= rect.maxZ && maxZ + marginM >= rect.minZ) { this.stale.add(def.id); n++; }
+    }
+    if (n) this.refresh();
+    return n;
   }
 
   /** @deprecated use refresh() */
