@@ -19,9 +19,13 @@ Brücken, Tunnel und Props sind **code-basiert** und im Editor live editierbar.
    `setModifiers()`), nicht dein konkretes `StreamTerrain`. Details in Kapitel 2a.
 4. **Körper statt Decal.** Die Straße hat Dicke (Unterbau). Terrain-Lücken/Durchstoßungen werden
    dadurch verdeckt; zusätzlich optional Böschungen/Einschnitte für saubere Übergänge.
-5. **Runtime ≠ Editor.** Editor-Code (Code-Editor, Tools, GUI) ist ein separates Paket und
+5. **Eigenständiges Modul.** Das Modul ändert **keine bestehenden Spieldateien**. Es kennt das Spiel
+   nur über Interfaces (`TerrainSource`, `RoadStore`, `EditorHost`). Die Integration ins Spiel
+   (Adapter, `StreamTerrain`-Anbindung, PHP-Endpunkte) ist ein **separater, späterer Schritt**;
+   dafür liefere ich dann fertige Adapter-/Patch-Vorschläge als Dateien, ohne sie selbst anzuwenden.
+6. **Runtime ≠ Editor.** Editor-Code (Code-Editor, Tools, GUI) ist ein separates Paket und
    wird nicht ins Spiel gebündelt. Das Spiel lädt nur die Runtime (oder vorgebackene Daten).
-6. **Performance by design.** Chunking, Instancing, Dirty-Rebuild, optional Worker.
+7. **Performance by design.** Chunking, Instancing, Dirty-Rebuild, optional Worker.
 
 ---
 
@@ -130,13 +134,19 @@ verträglich kombiniert.
   Code-Definitionen (Profile, Brücken, Tunnel, Materialien, Prop-Regeln), ortsübergreifend
   wiederverwendbar, per Location überschreibbar.
 - **Zugriff über ein `RoadStore`-Interface** (`load(location)`, `save(location, doc, baseRevision)`),
-  Implementierungen: `HttpRoadStore` (REST), `MemoryStore` (Tests), `LocalFileStore` (Demo).
-- **Empfehlung Datenbank:** Für den Start **keine echte DB nötig** – JSON-Datei pro Location
-  auf dem Server (selbes Muster wie Flüsse, `gaps.ts`, `wildlife.ts`), aber mit
-  **Revisionszähler** (optimistisches Locking gegen gleichzeitiges Überschreiben), automatischem
-  Backup/Versionsverlauf und Schema-Version im Dokument. Eine DB (SQLite/Postgres) lohnt erst bei
-  mehreren gleichzeitigen Editoren, Änderungshistorie pro Straße oder sehr großen Netzen – dank
-  `RoadStore` später ohne Änderung am Modul austauschbar.
+  Implementierungen: `MemoryStore` (Tests), `LocalFileStore` (Demo), `HttpRoadStore` (REST gegen PHP).
+- **Backend ist PHP + MySQL** (Muster wie bei Rivers/Gaps). Empfehlung für Phase 12:
+  - ein PHP-Endpunkt `roads.php` (GET lädt, POST speichert; Auth wie bei den anderen
+    Editor-/Save-Endpoints),
+  - Tabelle `roads(location, revision, doc JSON/LONGTEXT, updated_by, updated_at)` plus
+    `roads_history` für Versionsverlauf, und `road_library` für die Code-Bibliothek,
+  - **Optimistisches Locking:** `save` sendet `baseRevision`; PHP lehnt mit 409 ab, wenn sie
+    nicht mehr aktuell ist.
+  - Das Dokument bleibt **ein JSON pro Location** (kein relationales Zerlegen) – genau wie
+    `rivers-<location>.json`; MySQL liefert nur Speicher, Revision und Verlauf. Die Variante „JSON-Datei"
+    bleibt als einfachster Start möglich. Der Node-Prozess (`highscores.mjs`) wird nicht gebraucht.
+  - Dieses PHP-Skript schreibe ich später als **neue, separate Datei** zum Einfügen in
+    `server/php/` – ohne bestehende Skripte zu berühren.
 - **Sicherheit:** Profile/Brücken sind ausführbarer JS-Code. Der Schreib-Endpunkt muss
   **authentifiziert und nur für Editoren/Admins** sein; Spieler laden nur, was Admins gespeichert
   haben. Für den Spiel-Release kann der Code zusätzlich **vorkompiliert/gebacken** werden
@@ -300,8 +310,18 @@ Beides sind **Abschnitte `[s0, s1]` einer Edge**, deren Generator Code ist.
   Bodenschwellen, Rüttelstreifen, Lärmschutzwände, Wegkreuze/Bänke an Wanderwegen.
 
 ### 3.8 Query-/Gameplay-API (Ergänzung)
-- `sampleAt(point)` → Edge, s, Querposition, Höhe, **Oberflächentyp**, Reibung
-  (für Fahrzeugphysik/Schritte/Sounds).
+Spielkontext: **Wingsuit-Spiel** (Flug über das Gelände, Crash auf der Straße) und
+**später evtl. Fahrzeuge** auf der Straße. Daraus folgt:
+- **Crash-/Kollisionsabfrage** ohne Physik-Engine: `roads.intersectSegment(a, b)` /
+  `roads.raycast(origin, dir)` (Schnitt mit Straßenkörper, Leitplanken, Schildern, Brücken/
+  Tunnelwänden, Masten) → Treffer mit Oberfläche und Normale. Basis: räumlicher Index
+  (Grid/BVH) über vereinfachte Kollisionsgeometrie, nicht über die Render-Meshes.
+- **Oberflächentyp** (Asphalt, Kies, Gras, Wasser…) für Crash-Effekte/Sounds.
+- **Hohe Fluggeschwindigkeit:** LOD und Streaming der Straßen-Chunks (Fernsicht, Nachladen
+  vorausschauend entlang der Flugbahn) werden früh mitgedacht; Props haben Sicht-/Detail-Distanzen.
+- **Fahrzeug später:** Reibungswerte pro Oberfläche, Lane-Graph, Fahrbahnhöhe/Normale
+  (`sampleAt`) mit glatter Tangenten-Interpolation, optional Collider-Export.
+- `sampleAt(point)` → Edge, s, Querposition, Höhe, **Oberflächentyp**, Reibung.
 - `nearestRoad`, `raycast`, **Lane-Graph** (Spuren + Abbiegebeziehungen) für Verkehr/AI,
   `findPath(a, b)`.
 - **Collider-Export**: vereinfachte Trimesh/Heightfield-Daten für Rapier/cannon-es/Ammo.
@@ -424,12 +444,11 @@ ist bewusst *nach* dem Straßenkörper: Das Modul funktioniert vollständig ohne
 - Lokalisierung Schweiz (SSV-Schilder, Wanderweg-Farbcodes, VSS-orientierte Profile).
 
 **Noch offen (Defaults in Klammern):**
-1. **Server-Stack**, auf dem gespeichert wird (Node? Python? bestehender Endpunkt für `rivers-*.json`?)
-   → bestimmt die konkrete `HttpRoadStore`-Gegenseite. (Wir spiegeln den bestehenden Mechanismus.)
-2. **Koordinatenkonvention:** Sind Spielkoordinaten `x=Ost, z=Süd` und die Spiegelung findet nur
-   beim Mesh statt? (`WorldAdapter` mit konfigurierbarem Vorzeichen, wird gegen `riverField.ts`
-   geprüft.)
-3. **Darf `StreamTerrain` angepasst werden** (verallgemeinertes `setModifiers`, Anheben)? (Ja, ich
-   liefere einen Patch-Vorschlag; ohne Patch läuft alles über den Straßenkörper.)
-4. **Physik/Fahrzeuge** im Spiel? Bestimmt Collider-Export und Reibungs-Query. (Noch nicht festgelegt)
-5. **Maßstab:** 1 Einheit = 1 m. (Ja)
+1. **Koordinatenkonvention:** `x=Ost, z=Süd`, Spiegelung nur beim Mesh? (`WorldAdapter` mit
+   konfigurierbarem Vorzeichen; wird gegen `riverField.ts` geprüft.)
+2. **Crash-Mechanik:** Wie prüft das Spiel heute eine Bodenberührung des Wingsuit-Spielers
+   (nur `heightAt`, oder Physik-Engine)? Bestimmt das Format der Kollisions-Query. (Eigener Index im Modul)
+3. **Fahrzeuge:** Erst später; die Datenstrukturen (Lane-Graph, Reibung) sind vorbereitet. (Ja)
+4. **Maßstab:** 1 Einheit = 1 m. (Ja)
+5. **`StreamTerrain`-Anpassung** (generische Modifier, Anheben) erfolgt später als Patch-Vorschlag
+   beim Integrationsschritt – bis dahin läuft das Modul gegen ein Mock-Terrain.
