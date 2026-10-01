@@ -82,17 +82,16 @@ interface TerrainSource {
    Chunks werden gebaut, sobald alle Samples im Footprint `settled` sind (bzw. provisorisch
    sofort und danach neu gebaut). Ein budgetierter `resync()` pro Frame (max. N Chunks)
    verhindert Frame-Spikes.
-2. **Autoritative Höhe ≠ Terrain-Höhe.** Pro Punkt wird `y` **gespeichert** (wie `RiverPoint.y`),
-   der Editor schreibt beim Setzen die *settled* Terrainhöhe. Dadurch „schwebt" nichts, wenn eine
-   feinere Kachel nachlädt, und Brücken/Tunnel haben feste Höhen. Optionaler Modus `auto`
-   (folgt dem Terrain) wird erst nach `isSettledAt` gebaut und kann per Editor-Button
-   „Höhen fixieren" in feste `y`-Werte gebacken werden.
+2. **Höhen: settled-Terrain ist stabil (siehe 2b).** `drape` (Standard) liest die Terrainhöhe erst
+   nach `isSettledAt`, danach ändert sie sich nicht mehr. Pro Punkt wird zusätzlich `y` gespeichert
+   (wie `RiverPoint.y`): Editor-Vorschau/Fallback vor dem Settling und feste Höhe für `fixed`,
+   Brücken und Tunnel. Ein Editor-Button „Höhen fixieren" kann `drape` in feste `y` backen.
 3. **Zirkularität vermeiden.** Carve verändert `heightAt()`. Das Längsprofil darf sich aber
    nicht aus dem *schon abgesenkten* Terrain ableiten (sonst Rückkopplung). Daher:
    Der Adapter liefert die **Basis-Höhe ohne Straßen-Modifier** (`heightAt` mit Modifier-Bypass
    bzw. Straßen-Modifier werden erst *nach* der Alignment-Berechnung eingespeist). Fixierte `y`
    in den Daten lösen das Problem grundsätzlich.
-4. **Log-Depth-Buffer ist aktiv.** Materialien werden als `MeshStandardMaterial` +
+4. **Log-Depth-Buffer ist aktiv.** Materialien werden als `MeshLambertMaterial` (wie das Terrain) +
    `onBeforeCompile` gebaut (nicht als rohes `ShaderMaterial`) → Logdepth, Nebel, Schatten,
    Spiel-Beleuchtung funktionieren automatisch. Wo doch ein `ShaderMaterial` nötig ist,
    werden `logdepthbuf_*`-Chunks eingebunden.
@@ -167,6 +166,25 @@ verträglich kombiniert.
 3. **Validierung:** Liegt das Gelände über einem Tunnelabschnitt zu niedrig (Überdeckung
    < Mindestmaß), warnt der Editor und schlägt **Galerie/Einschnitt** vor (typisch Schweiz:
    Lawinengalerien).
+
+---
+
+## 2b. Erkenntnisse aus den Referenzdateien (`streamTerrain.ts`, `rivers.ts`, `riverField.ts`)
+
+Gelesen, nicht verändert. Folgendes ist **verifiziert** und fließt ins Design ein:
+
+| Befund | Konsequenz für das Modul |
+|---|---|
+| `heightAt()` liefert die Höhe der **feinsten bereits geladenen** Kachel (auch grobe Fallback-Kachel) **minus `carveAt()`** (Flüsse). `null` nur, wenn gar nichts geladen ist. | Höhen nur lesen, wenn `isSettledAt` – genau wie `riverField.resync()`. Rivers sind bereits im `heightAt` eingerechnet. |
+| `isSettledAt` = feinste je existierende Kachel ist bereit. Die Höhe ist dann **endgültig** (kein späteres Nachladen ändert sie). | Gesettelte Terrainhöhe ist stabil → `drape` darf **die Standardeinstellung** sein (wie bei Flüssen); gespeicherte `y` sind Editor-Vorschau/Fallback und für `fixed`/Brücke/Tunnel. *(Korrektur ggü. Kapitel 2a, Punkt 2.)* |
+| Kein Event bei fertig geladenen Kacheln; `riverField.resync()` pollt jeden Frame und baut Chunks, sobald **alle** Samples `isSettledAt` sind. | Gleiches Muster: budgetiertes `resync()`, Chunk-Bau erst wenn Samples **plus Alignment-Fenster** gesettelt sind. |
+| Mesh-Rasterung: Quads → 2 Dreiecke; `heightAt` interpoliert **bilinear**; `meshStride` (Mobil) macht das Mesh gröber als die Höhendaten. Auflösung fein: ~1,5 m Raster, 0,1 m Höhe. | Sichtbare Abweichung Mesh ↔ `heightAt` (Dezimeter bis Meter an Steilhängen) → die **Dicke des Straßenkörpers + Böschungs-Skirt** ist nötig, nicht nur Kosmetik. |
+| Carve: `y = Höhe − carveAt(x,z)`, **nur für Kacheln gebaut nach `setRivers()`**; Normalen werden nicht angepasst; `carveAt` ist ein heißer Pfad (Grid, 100 m Zellen). | Der spätere `TerrainModifier` muss **signiert** sein (negatives Carve = Anheben ist trivial), billig (Grid), und braucht ein `invalidate(rect)` zum Neu-Meshen; Normalen-Gradient sollte mitkorrigiert werden. Alles Teil des späteren Patch-Vorschlags. |
+| Terrain nutzt **`MeshLambertMaterial`** + `onBeforeCompile`, Szenen-Nebel, `atmo.applyCloudShadow(mat)`; Fluss nutzt `ShaderMaterial` mit manuellem Fog + `uLight`. | Straßenmaterialien **standardmäßig `MeshLambertMaterial`** (gleicher Look, günstig), mit **Material-Hooks** (`onMaterialCreated(mat)`) zum Anschließen von Atmosphäre/Wolkenschatten und `setLight(0..1)` für Tag/Nacht. *(Korrektur ggü. Kap. 5: nicht `MeshStandardMaterial`.)* |
+| Weltkonvention: Sim-Raum `(x, y, z)`, three-Raum `(x, y, −z)` – überall (`placedObjects`, `riverField`, `buildMesh`). Terrain-Index: `z0 = tz·size`. | `WorldAdapter` = exakt `simToThree(x,y,z) = (x,y,−z)`. Modul rechnet intern **im three-Raum**; Daten werden im **Sim-Raum** gespeichert. Links/Rechts-Berechnung ausschließlich im three-Raum, damit Windung/Normalen stimmen. |
+| Persistenz: `GET api/rivers-<loc>.json` (statisch) **oder** `api/rivers-save.php?location=`; `POST api/rivers-save.php {location, rivers}`; Basis `window.WINGSUIT_API ?? 'api'`; ganze Liste wird ersetzt; kein Revisionsfeld, Auth nicht sichtbar. | `HttpRoadStore` spiegelt das 1:1 (`roads-<loc>.json` / `roads-save.php`), Revision/409 als **abwärtskompatible Erweiterung**. |
+| Rivers werden per Skript aus **swissTLM3D** erzeugt (10 m Resampling, bis 6000 Punkte/Fluss). | **Straßen-Seed aus swissTLM3D** (analog `extract_rivers.py`): Objektarten → Profile (Autobahn…Wanderweg), Kunstbauten → Brücke/Tunnel/Galerie. Das Netz wird also **groß** (tausende Kanten): lazy Chunk-Bau, räumlicher Index, Props instanziert, LOD. |
+| Physik/Crash nutzt `heightAt()`. | Straßen brauchen eine **eigene** Kollisionsabfrage (siehe 3.8); `heightAt` weiß nichts von Straßenkörpern/Brücken. |
 
 ---
 
@@ -358,7 +376,7 @@ Spielkontext: **Wingsuit-Spiel** (Flug über das Gelände, Crash auf der Straße
 | **Lane-Graph + Verkehrs-API** | Fahrzeug-AI, Navigation, Ampelsteuerung funktionieren sofort |
 | **Wetter/Alter/Jahreszeit-Uniforms** | Nasse Straße, Schnee, Laub, Verschleiß ohne neue Meshes |
 | **Baking** (glTF + JSON) | Im Spiel nur Loader; Editor/Generator müssen nicht ausgeliefert werden |
-| **GeoJSON/OSM-Import** | Reale Straßennetze → `highway=*` wird auf Profile gemappt |
+| **swissTLM3D-Import** (analog zum Fluss-Seed) | Reales Schweizer Straßennetz als Startpunkt, im Editor nachbearbeitbar; GeoJSON/OSM später |
 | **Schienen/Tram/Fluss/Kanal** | Gleiche Extrusions-Engine, fast kostenlos |
 | **Straßenschäden/Baustellen** | Schlaglöcher, Absperrungen, Umleitungsschilder als Prop-Regeln |
 | **Regionen-Sets** (StVO / MUTCD / …) | Schilder, Markierungen und Ampeln umschaltbar |
@@ -371,7 +389,8 @@ Spielkontext: **Wingsuit-Spiel** (Flug über das Gelände, Crash auf der Straße
   `WebGLRenderer` mit `logarithmicDepthBuffer` (siehe 2a).
 - **Vite** für Demo/Editor, **Vitest** für Tests, **CodeMirror 6** (leicht) statt Monaco,
   **Tweakpane** für Parameter-UI.
-- **Materialien:** `MeshStandardMaterial` + `onBeforeCompile`, Definition über eine
+- **Materialien:** `MeshLambertMaterial` (wie das Terrain) + `onBeforeCompile`, optional
+  `MeshStandardMaterial` in der Demo; Definition über eine
   **Material-Registry** (`kind: 'procedural' | 'texture'`): zunächst rein prozedural; eigene
   Texturen ersetzen später einzelne Registry-Einträge, ohne Profile/Daten zu ändern
   (Profile referenzieren nur Material-*Namen*).
@@ -389,9 +408,9 @@ Jede Phase endet mit etwas **Sichtbarem und Lauffähigem** in der Demo (gegen da
 
 | # | Phase | Ergebnis / Abnahmekriterium |
 |---|---|---|
-| 0 | **Setup** | Vite+TS+Vitest, Demo-Szene, **Mock-`StreamTerrain`** (Heightmap, Kachel-Streaming, `null`/`isSettledAt`, Logdepth-Renderer), Orbit-Kamera, Debug-Draw |
-| 1 | **Core** | `TerrainSource`-Adapter, `WorldAdapter`, Catmull-Rom + Bogenlänge, Frames, Krümmung, Höhenmodi (`fixed`/`drape`/`graded`), `resync()`; Tests. Parallel: Kreuzungs-Prototyp |
-| 2 | **Profil + Extrusion (MVP)** | Straße per Klick aufs Terrain zeichnen (gespeicherte `y`); Presets Flurstraße & Hauptstraße; Dicke verdeckt Terrain-Lücken; Nachladen des Terrains lässt nichts schweben |
+| 0 | **Setup** ✅ | Vite+TS+Vitest, Demo-Szene, **Mock-`StreamTerrain`** (Heightmap, Kachel-Streaming, `null`/`isSettledAt`, Logdepth-Renderer), Orbit-Kamera, Debug-Draw |
+| 1 | **Core** ✅ (ohne Kreuzungs-Prototyp) | `TerrainSource`-Adapter, `WorldAdapter`, Catmull-Rom + Bogenlänge, Frames, Krümmung, Höhenmodi (`fixed`/`drape`/`graded`), `resync()`; Tests. Parallel: Kreuzungs-Prototyp |
+| 2 | **Profil + Extrusion (MVP)** | Straße per Klick aufs Terrain zeichnen (`drape` auf gesettelte Höhe, `y` als Fallback); Presets Flurstraße & Hauptstraße; Dicke verdeckt Terrain-Lücken; Nachladen des Terrains lässt nichts schweben |
 | 3 | **Persistenz + Mini-Editor** | Datenmodell + `RoadStore` (Memory/HTTP), Punkte verschieben, Profil-Code live editieren, Params-UI, 2D-Querschnitt, Undo/Redo, Revisionen |
 | 4 | **Netzwerk + Kreuzungen** | Graph, Y/T/X-Kreuzungen, Profilübergänge, Sackgasse |
 | 5 | **Oberflächen & Markierungen** | Material-Registry + prozedurale Materialien (austauschbar), Verschleiß-Layer, Markierungen, alle Basis-Presets (Wanderweg → Autobahn) |
@@ -402,9 +421,10 @@ Jede Phase endet mit etwas **Sichtbarem und Lauffähigem** in der Demo (gegen da
 | 10 | **Terrain-Modifier** | `TerrainModifier`-Interface, `RoadTerrainModifier` (Absenken + Anheben), Patch-Vorschlag für `StreamTerrain`, Böschungs-Skirts |
 | 11 | **Erweiterte Topologie** | Kreisel, Auf-/Abfahrten, Autobahnkreuz-Bausteine, Unterführungen |
 | 12 | **In-Game-Editor** | `mountEditor(host)` im echten Spiel, Eingabe-Arbitrierung, `HttpRoadStore`, Konfliktdialog, Auth-Hinweise |
-| 13 | **Gameplay-API** | `sampleAt`, Lane-Graph, `findPath`, Collider-Export, Road-Mask-Textur, Vegetations-Ausschluss |
-| 14 | **Tools & Performance** | Auto-Routing, Trassierungsvalidierung, Worker-Build, LOD, Baking (ohne `new Function` im Release), GeoJSON-Import |
-| 15 | **Politur** | Doku, Beispiele, Tests, API-Stabilisierung |
+| 13 | **swissTLM3D-Import** | `tools/`-Skript (Python wie `extract_rivers.py`) + Importer → Netz aus Objektart/Belag/Kunstbaute |
+| 14 | **Gameplay-API** | `sampleAt`, Lane-Graph, `findPath`, Collider-Export, Road-Mask-Textur, Vegetations-Ausschluss |
+| 15 | **Tools & Performance** | Auto-Routing, Trassierungsvalidierung, Worker-Build, LOD, Baking (ohne `new Function` im Release) |
+| 16 | **Politur** | Doku, Beispiele, Tests, API-Stabilisierung |
 
 Phasen 2–3 liefern früh etwas Benutzbares. Die Kreuzungen werden bereits in Phase 1 als
 isolierter Prototyp angegangen (größtes Geometrie-Risiko). Der Terrain-Modifier (Phase 10)
