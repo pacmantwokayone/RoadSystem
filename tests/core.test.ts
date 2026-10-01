@@ -4,7 +4,7 @@ import { simToThree, threeToSim } from '../src/core/world';
 import { PathCurve } from '../src/core/spline';
 import { makeFrame, horizontalCurvature } from '../src/core/frames';
 import { sampleRoad } from '../src/core/sampling';
-import { designHeightAt } from '../src/core/alignment';
+import { designHeightAt, dependencyRadius } from '../src/core/alignment';
 import type { RoadDef } from '../src/network/types';
 
 const road = (pts: Array<[number, number, number, Partial<RoadDef['points'][number]>?]>): RoadDef => ({
@@ -160,5 +160,36 @@ describe('alignment', () => {
       fixedWeight: new Float64Array(sliceIdx.length),
     };
     expect(designHeightAt(slice, 6, 12)).toBeCloseTo(designHeightAt(full, 60, 12), 9);
+  });
+
+  it('dilate: design height never drops below the terrain envelope (random terrain)', () => {
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const ground = Float64Array.from(s, () => 500 + 12 * rnd());
+    const inp = { s, ground, authored: zeros, fixedWeight: zeros };
+    for (let i = 0; i < n; i++) expect(designHeightAt(inp, i, 12, { dilate: true })).toBeGreaterThanOrEqual(ground[i] - 1e-9);
+  });
+
+  it('dilate: stays seam-consistent within its dependency radius', () => {
+    const ground = Float64Array.from(s, (v) => 500 + 20 * Math.sin(v / 9) + 5 * Math.cos(v / 4));
+    const full = { s, ground, authored: zeros, fixedWeight: zeros };
+    const r = dependencyRadius(12, true); // 24 m = 12 samples at 2 m spacing
+    const lo = 60 - 12, hi = 60 + 12;
+    const idx = Array.from({ length: hi - lo + 1 }, (_, k) => lo + k);
+    const slice = {
+      s: Float64Array.from(idx, (i) => s[i]),
+      ground: Float64Array.from(idx, (i) => ground[i]),
+      authored: new Float64Array(idx.length),
+      fixedWeight: new Float64Array(idx.length),
+    };
+    expect(r).toBe(24);
+    expect(designHeightAt(slice, 12, 12, { dilate: true })).toBeCloseTo(designHeightAt(full, 60, 12, { dilate: true }), 9);
+  });
+
+  it('dilate: fixed sections do not lift the approach', () => {
+    const ground = Float64Array.from(s, (v) => (v >= 80 && v <= 120 ? 900 : 100)); // a hill under the bridge only
+    const authored = Float64Array.from(s, () => 150);
+    const fixed = Float64Array.from(s, (v) => (v >= 80 && v <= 120 ? 1 : 0));
+    expect(designHeightAt({ s, ground, authored, fixedWeight: fixed }, 30, 12, { dilate: true })).toBeCloseTo(100, 6);
   });
 });

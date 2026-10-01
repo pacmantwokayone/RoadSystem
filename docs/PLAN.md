@@ -188,6 +188,27 @@ Gelesen, nicht verändert. Folgendes ist **verifiziert** und fließt ins Design 
 
 ---
 
+## 2c. Umsetzungsnotizen Phase 2 (was sich beim Bauen ergeben hat)
+
+- **Straße nie unter dem Terrain (garantiert):** Das Terrain wird auch *quer* zur Straße gesampelt
+  (Mitte, Fahrbahnränder, Außenkanten). Die Höhe entsteht per „aufweiten, dann glätten":
+  lokales Maximum im Radius *r*, danach FIR-Glättung mit Radius *r*. Das ist mathematisch
+  ≥ Terrain unter der Fahrbahn und bleibt rein lokal (naht-konsistent). Gemessen im Demo-Terrain:
+  0 von 1011 Messpunkten vom sichtbaren Mesh verdeckt (max. 8 cm).
+- **Körper statt Lücke:** Die Seitenwände reichen bis unter das Terrain neben der Straße (gedeckelt).
+  Am Hang entsteht dadurch talseitig eine „Stützwand"-Optik – die echte Böschung/der Einschnitt
+  kommt mit Phase 10 (Terrain-Modifier).
+- **Frames aus der Entwurfshöhe**, nicht aus den gesetzten Punkten: Normalen kippen mit der Steigung
+  (Beleuchtung stimmt am Hang). Dafür löst jeder Chunk die Höhe ±1 Sample über seinen Rand hinaus auf.
+- **Profile sind Code** (`export const params` + `export default (p, R) => R.profile(…)`), ein
+  fehlerhafter Edit lässt die letzte funktionierende Version aktiv (`ProfileLibrary`).
+- **LOD-Übergang (gilt auch im Spiel):** `isSettledAt` ist wahr, sobald die feine Kachel *bereit* ist –
+  angezeigt wird aber evtl. noch das grobe Eltern-Mesh, bis alle vier Geschwister geladen sind. In diesem
+  kurzen Fenster kann Gelände die Straße verdecken. Gegenmaßnahme später (Phase 10): Straßen-Modifier
+  senkt das Gelände ab bzw. Chunk-Sichtbarkeit wartet auf `visible`-Info des Terrains.
+
+---
+
 ## 3. Kernkonzepte im Detail
 
 ### 3.1 Spline & Terrain-Anpassung
@@ -410,7 +431,7 @@ Jede Phase endet mit etwas **Sichtbarem und Lauffähigem** in der Demo (gegen da
 |---|---|---|
 | 0 | **Setup** ✅ | Vite+TS+Vitest, Demo-Szene, **Mock-`StreamTerrain`** (Heightmap, Kachel-Streaming, `null`/`isSettledAt`, Logdepth-Renderer), Orbit-Kamera, Debug-Draw |
 | 1 | **Core** ✅ (ohne Kreuzungs-Prototyp) | `TerrainSource`-Adapter, `WorldAdapter`, Catmull-Rom + Bogenlänge, Frames, Krümmung, Höhenmodi (`fixed`/`drape`/`graded`), `resync()`; Tests. Parallel: Kreuzungs-Prototyp |
-| 2 | **Profil + Extrusion (MVP)** | Straße per Klick aufs Terrain zeichnen (`drape` auf gesettelte Höhe, `y` als Fallback); Presets Flurstraße & Hauptstraße; Dicke verdeckt Terrain-Lücken; Nachladen des Terrains lässt nichts schweben |
+| 2 | **Profil + Extrusion (MVP)** ✅ | Straße per Klick aufs Terrain zeichnen (`drape` auf gesettelte Höhe, `y` als Fallback); Presets Flurstraße & Hauptstraße; Dicke verdeckt Terrain-Lücken; Nachladen des Terrains lässt nichts schweben |
 | 3 | **Persistenz + Mini-Editor** | Datenmodell + `RoadStore` (Memory/HTTP), Punkte verschieben, Profil-Code live editieren, Params-UI, 2D-Querschnitt, Undo/Redo, Revisionen |
 | 4 | **Netzwerk + Kreuzungen** | Graph, Y/T/X-Kreuzungen, Profilübergänge, Sackgasse |
 | 5 | **Oberflächen & Markierungen** | Material-Registry + prozedurale Materialien (austauschbar), Verschleiß-Layer, Markierungen, alle Basis-Presets (Wanderweg → Autobahn) |

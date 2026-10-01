@@ -3,11 +3,16 @@ import { MockStreamTerrain } from '../src/terrain/mockStreamTerrain';
 import { RoadSystem } from '../src/runtime/roadSystem';
 import { RoadRuntime, DEFAULT_RUNTIME_OPTIONS } from '../src/runtime/roadRuntime';
 import type { RoadDef } from '../src/network/types';
+import { ProfileLibrary } from '../src/profile/library';
+
+const lib = new ProfileLibrary();
+const resolve = (d: RoadDef) => lib.resolve(d.profile, d.params);
+const prof = lib.resolve('hauptstrasse');
 
 const mkRoad = (pts: Array<[number, number, number]>, extra: Record<number, object> = {}): RoadDef => ({
   id: 'r1',
   name: 'Test',
-  profile: 'x',
+  profile: 'hauptstrasse',
   points: pts.map(([x, y, z], i) => ({ x, y, z, ...(extra[i] ?? {}) })),
 });
 
@@ -62,7 +67,7 @@ describe('RoadRuntime / RoadSystem settle-before-build', () => {
   it('builds nothing while the terrain has not settled, even with coarse fallback available', () => {
     const t = new MockStreamTerrain();
     t.loadRectSync(0, 0, 6000, 6000, 4); // coarse only
-    const sys = new RoadSystem(t);
+    const sys = new RoadSystem(t, resolve);
     sys.setRoads([mkRoad(line)]);
     expect(sys.resync({ checks: 1000, builds: 1000 })).toBe(0);
     expect(sys.stats().ready).toBe(0);
@@ -71,7 +76,7 @@ describe('RoadRuntime / RoadSystem settle-before-build', () => {
   it('builds all chunks once settled and design height follows the terrain', () => {
     const t = new MockStreamTerrain();
     settleAround(t);
-    const sys = new RoadSystem(t);
+    const sys = new RoadSystem(t, resolve);
     sys.setRoads([mkRoad(line)]);
     const seen: number[] = [];
     sys.onChunkReady((_r, c) => seen.push(c.index));
@@ -80,17 +85,19 @@ describe('RoadRuntime / RoadSystem settle-before-build', () => {
     const rt = sys.runtimes[0];
     expect(sys.stats().ready).toBe(sys.stats().chunks);
     expect(seen.length).toBe(rt.chunks.length);
-    // smoothed height stays within a few metres of the raw terrain along the path
+    // design height is never below the terrain on the centre line, and stays within a
+    // sensible distance above it (dilate-then-smooth bridges bumps, it doesn't fly)
     rt.samples.forEach((s, i) => {
       const raw = t.heightAt(s.pos.x, -s.pos.z)!;
-      expect(Math.abs(rt.designY[i] - raw)).toBeLessThan(6);
+      expect(rt.designY[i] - raw).toBeGreaterThan(-1e-6);
+      expect(rt.designY[i] - raw).toBeLessThan(12);
     });
   });
 
   it('respects the per-call build budget', () => {
     const t = new MockStreamTerrain();
     settleAround(t);
-    const sys = new RoadSystem(t);
+    const sys = new RoadSystem(t, resolve);
     sys.setRoads([mkRoad(line)]);
     expect(sys.resync({ checks: 1000, builds: 1 })).toBe(1);
   });
@@ -99,7 +106,7 @@ describe('RoadRuntime / RoadSystem settle-before-build', () => {
     const t = new MockStreamTerrain();
     t.loadRectSync(0, 0, 6000, 6000, 4);
     t.loadRectSync(2990, 2990, 3310, 3050, 0); // fine tiles only near the road start
-    const sys = new RoadSystem(t);
+    const sys = new RoadSystem(t, resolve);
     sys.setRoads([mkRoad(line)]);
     sys.resync({ checks: 1000, builds: 1000 });
     const { ready, chunks } = sys.stats();
@@ -110,8 +117,8 @@ describe('RoadRuntime / RoadSystem settle-before-build', () => {
   it('chunk heights are identical whichever order chunks are built in (no seams)', () => {
     const t = new MockStreamTerrain();
     settleAround(t);
-    const a = new RoadRuntime(mkRoad(line), t, DEFAULT_RUNTIME_OPTIONS);
-    const b = new RoadRuntime(mkRoad(line), t, DEFAULT_RUNTIME_OPTIONS);
+    const a = new RoadRuntime(mkRoad(line), t, prof, DEFAULT_RUNTIME_OPTIONS);
+    const b = new RoadRuntime(mkRoad(line), t, prof, DEFAULT_RUNTIME_OPTIONS);
     a.chunks.forEach((c) => a.tryBuildChunk(c));
     [...b.chunks].reverse().forEach((c) => b.tryBuildChunk(c));
     for (let i = 0; i < a.designY.length; i++) expect(b.designY[i]).toBeCloseTo(a.designY[i], 9);
@@ -123,7 +130,7 @@ describe('RoadRuntime / RoadSystem settle-before-build', () => {
     const def = mkRoad(line.map(([x, , z]) => [x, 1234, z] as [number, number, number]), {
       1: { mode: 'bridge' }, 2: { mode: 'bridge' },
     });
-    const rt = new RoadRuntime(def, t, DEFAULT_RUNTIME_OPTIONS);
+    const rt = new RoadRuntime(def, t, prof, DEFAULT_RUNTIME_OPTIONS);
     rt.chunks.forEach((c) => rt.tryBuildChunk(c));
     const onBridge = rt.samples.findIndex((s) => s.mode === 'bridge' && s.fixedWeight === 1);
     expect(onBridge).toBeGreaterThanOrEqual(0);

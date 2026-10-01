@@ -34,11 +34,35 @@ export function windowRange(s: ArrayLike<number>, i: number, radiusM: number): [
   return [lo, hi];
 }
 
-/** Design height at sample i. Reads `ground` only inside [lo, hi] of the window
+export interface DesignOptions {
+  /**
+   * Dilate the terrain envelope (local maximum within the smoothing radius)
+   * before smoothing. Guarantees design height >= terrain at every sample —
+   * the road is never buried by a bump the smoothing would otherwise shave
+   * off. Needs ground data within 2 × radius (see `dependencyRadius`).
+   */
+  dilate?: boolean;
+}
+
+/** How far (arc length) a sample's design height reaches for ground data. */
+export function dependencyRadius(radiusM: number, dilate: boolean): number {
+  return dilate ? radiusM * 2 : radiusM;
+}
+
+/** Design height at sample i. Reads `ground` only inside the dependency window
  * and only where fixedWeight < 1. */
-export function designHeightAt(inp: AlignInput, i: number, radiusM: number): number {
+export function designHeightAt(inp: AlignInput, i: number, radiusM: number, opts: DesignOptions = {}): number {
   const fw = inp.fixedWeight[i];
   if (fw >= 1) return inp.authored[i];
+  const dilate = opts.dilate ?? false;
+  // value of the (optionally dilated) envelope at sample j
+  const envAt = (j: number): number => {
+    if (!dilate || radiusM <= 0) return inp.ground[j];
+    const [a, b] = windowRange(inp.s, j, radiusM);
+    let m = -Infinity;
+    for (let k = a; k <= b; k++) if (inp.fixedWeight[k] < 1 && inp.ground[k] > m) m = inp.ground[k];
+    return m;
+  };
   let sum = 0;
   let wsum = 0;
   if (radiusM <= 0) {
@@ -54,7 +78,7 @@ export function designHeightAt(inp: AlignInput, i: number, radiusM: number): num
       const sNext = j < hi ? inp.s[j + 1] : inp.s[j];
       const dsj = Math.max(1e-6, (sNext - sPrev) * 0.5);
       const w = kernel((inp.s[j] - inp.s[i]) / radiusM) * free * dsj;
-      sum += inp.ground[j] * w;
+      sum += envAt(j) * w;
       wsum += w;
     }
   }

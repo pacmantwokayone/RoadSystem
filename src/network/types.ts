@@ -29,8 +29,10 @@ export interface RoadPoint {
 export interface RoadDef {
   id: string;
   name: string;
-  /** Name of a profile in the profile library (resolved from Phase 2 on). */
+  /** Name of a profile in the profile library. */
   profile: string;
+  /** Parameter overrides for the profile's `params` schema. */
+  params?: Record<string, number | boolean | string>;
   points: RoadPoint[];
 }
 

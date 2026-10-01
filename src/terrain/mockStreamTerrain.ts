@@ -182,6 +182,17 @@ export class MockStreamTerrain implements TerrainSource {
     }
   }
 
+  /** Debug: every tile covering (x, z), finest first, with its visibility. */
+  tilesAt(x: number, z: number): Array<{ level: number; state: string; visible: boolean }> {
+    const out: Array<{ level: number; state: string; visible: boolean }> = [];
+    for (let level = 0; level < this.meta.numLevels; level++) {
+      const size = this.meta.levels[level].size;
+      const t = this.tiles.get(key(level, Math.floor(x / size), Math.floor(z / size)));
+      if (t) out.push({ level, state: t.state, visible: t.mesh?.visible ?? false });
+    }
+    return out;
+  }
+
   loadStats(): { ready: number; known: number } {
     let ready = 0;
     this.tiles.forEach((t) => { if (t.state === 'ready') ready++; });
