@@ -47,10 +47,14 @@ export function buildChunkGeometry(
   const nRings = chunk.i1 - chunk.i0 + 1;
   const V = S * 2 + 6; // top: 2/segment; left wall 2; right wall 2; bottom 2
   const total = nRings * V;
+  // closed ends: the road body is capped where the road starts / ends (free end or junction patch)
+  const capStart = chunk.i0 === 0;
+  const capEnd = chunk.i1 === rt.samples.length - 1;
+  const capVerts = ((capStart ? 1 : 0) + (capEnd ? 1 : 0)) * 2 * M;
 
-  const pos = new Float32Array(total * 3);
-  const nrm = new Float32Array(total * 3);
-  const uv = new Float32Array(total * 2);
+  const pos = new Float32Array((total + capVerts) * 3);
+  const nrm = new Float32Array((total + capVerts) * 3);
+  const uv = new Float32Array((total + capVerts) * 2);
 
   const tp = new Array<THREE.Vector3>(M); // top points of the current ring, world space
   for (let m = 0; m < M; m++) tp[m] = new THREE.Vector3();
@@ -66,6 +70,7 @@ export function buildChunkGeometry(
   };
 
   const wallBottom = new THREE.Vector3();
+  const caps: Array<{ start: boolean; tops: THREE.Vector3[]; bottoms: THREE.Vector3[]; us: number[]; normal: THREE.Vector3 }> = [];
   for (let r = 0; r < nRings; r++) {
     const i = chunk.i0 + r;
     const sample = rt.samples[i];
@@ -135,6 +140,20 @@ export function buildChunkGeometry(
     tmpN.set(0, -1, 0);
     putV(bw + 4, wallBottom.set(right.x, bR, right.z), tmpN, 0, sample.s); // bottom: right → left (faces down)
     putV(bw + 5, wallBottom.set(left.x, bL, left.z), tmpN, us[M - 1], sample.s);
+
+    if ((r === 0 && capStart) || (r === nRings - 1 && capEnd)) {
+      const span = xs[M - 1] - xs[0];
+      caps.push({
+        start: r === 0 && capStart,
+        tops: tp.map((v) => v.clone()),
+        bottoms: tp.map((v, m) => {
+          const f = Math.abs(span) > 1e-9 ? (xs[m] - xs[0]) / span : m / (M - 1);
+          return new THREE.Vector3(v.x, bL + (bR - bL) * f, v.z);
+        }),
+        us: Array.from(us),
+        normal: frame.tangent.clone().multiplyScalar(r === 0 && capStart ? -1 : 1),
+      });
+    }
   }
 
   // indices grouped by material
@@ -159,6 +178,25 @@ export function buildChunkGeometry(
     quad(body, b0 + w + 2, b0 + w + 3, b1 + w + 2, b1 + w + 3);
     quad(body, b0 + w + 4, b0 + w + 5, b1 + w + 4, b1 + w + 5);
   }
+
+  // end caps (body material): a vertical face over the whole cross-section
+  const ab = new THREE.Vector3(), ac = new THREE.Vector3();
+  caps.forEach((cap, ci) => {
+    const base = total + ci * 2 * M;
+    for (let m = 0; m < M; m++) {
+      putV(base + 2 * m, cap.tops[m], cap.normal, cap.us[m], 0);
+      putV(base + 2 * m + 1, cap.bottoms[m], cap.normal, cap.us[m], cap.tops[m].y - cap.bottoms[m].y);
+    }
+    const list = listFor(profile.bodyMaterial);
+    for (let k = 0; k < S; k++) {
+      const t0 = base + 2 * k, t1 = base + 2 * (k + 1), b0 = t0 + 1, b1 = t1 + 1;
+      ab.subVectors(cap.tops[k + 1], cap.tops[k]);
+      ac.subVectors(cap.bottoms[k], cap.tops[k]);
+      const front = ab.cross(ac).dot(cap.normal) > 0;
+      if (front) list.push(t0, t1, b0, t1, b1, b0);
+      else list.push(t0, b0, t1, t1, b0, b1);
+    }
+  });
 
   const materials = [...byMat.keys()];
   const index = new Uint32Array([...byMat.values()].flat());

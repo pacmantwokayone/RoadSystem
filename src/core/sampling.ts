@@ -53,10 +53,25 @@ export interface SampledRoad {
 
 const smooth = (t: number): number => t * t * (3 - 2 * t);
 
-export function sampleRoad(def: RoadDef, opts: SampleOptions = DEFAULT_SAMPLE_OPTIONS): SampledRoad {
+/** Metres cut off each end of the road (a junction patch takes over there). */
+export interface Trim {
+  start: number;
+  end: number;
+}
+
+export const NO_TRIM: Trim = { start: 0, end: 0 };
+const MIN_ROAD_LEN = 1;
+
+export function sampleRoad(def: RoadDef, opts: SampleOptions = DEFAULT_SAMPLE_OPTIONS, trim: Trim = NO_TRIM): SampledRoad {
   const pts = def.points;
   const curve = new PathCurve(pts.map((p) => simToThree(p.x, p.y, p.z)));
-  const forced = curve.pointS.slice(1); // every authored point after the first
+  // never trim away the whole road
+  const maxTrim = Math.max(0, curve.length - MIN_ROAD_LEN);
+  const total = trim.start + trim.end;
+  const k = total > maxTrim && total > 0 ? maxTrim / total : 1;
+  const s0 = Math.max(0, trim.start * k);
+  const s1 = curve.length - Math.max(0, trim.end * k);
+  const forced = curve.pointS.filter((ps) => ps > s0 + 1e-6 && ps < s1 - 1e-6).concat([s1]);
   const delta = Math.min(1, curve.length * 0.25);
 
   const tangentTmp1 = new Vector3();
@@ -70,10 +85,10 @@ export function sampleRoad(def: RoadDef, opts: SampleOptions = DEFAULT_SAMPLE_OP
     return horizontalCurvature(tangentTmp1, tangentTmp2, b - a);
   };
 
-  const ss: number[] = [0];
-  let s = 0;
+  const ss: number[] = [s0];
+  let s = s0;
   let nextForced = 0;
-  while (s < curve.length - 1e-6) {
+  while (s < s1 - 1e-6) {
     const k = Math.abs(kappaAt(s));
     let step = k > 1e-6 ? opts.maxTurnRad / k : opts.maxStepM;
     step = Math.min(opts.maxStepM, Math.max(opts.minStepM, step));
@@ -82,7 +97,7 @@ export function sampleRoad(def: RoadDef, opts: SampleOptions = DEFAULT_SAMPLE_OP
     if (nextForced < forced.length && next > forced[nextForced] - 0.25 * opts.minStepM) {
       next = forced[nextForced]; // land exactly on the authored point
     }
-    if (next > curve.length - 0.25 * opts.minStepM) next = curve.length;
+    if (next > s1 - 0.25 * opts.minStepM) next = s1;
     ss.push(next);
     s = next;
   }

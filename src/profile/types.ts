@@ -62,3 +62,17 @@ export interface ParamDef {
 
 export type ParamSchema = Record<string, ParamDef>;
 export type ParamValues = Record<string, number | boolean | string>;
+
+/** Height of the profile's top surface at lateral x (piecewise linear; clamped to the outer points). */
+export function profileHeightAt(profile: ProfileData, x: number): number {
+  const pts = profile.points;
+  if (x <= pts[0].x) return pts[0].y;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    if (x >= a.x && x <= b.x) {
+      const dx = b.x - a.x;
+      return dx > 1e-9 ? a.y + ((b.y - a.y) * (x - a.x)) / dx : Math.min(a.y, b.y);
+    }
+  }
+  return pts[pts.length - 1].y;
+}

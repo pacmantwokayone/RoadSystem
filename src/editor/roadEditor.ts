@@ -13,9 +13,11 @@ import type { ProfileLibrary } from '../profile/library';
 import type { MaterialRegistry } from '../surface/materials';
 import type { RoadStore } from '../store/types';
 import { cloneRoad } from '../network/doc';
-import { isFixedPoint, type RoadDef, type RoadPoint } from '../network/types';
-import { RoadModel } from './model';
+import { isFixedPoint, type NodeDef, type RoadDef, type RoadPoint } from '../network/types';
+import { armsByNode, type End } from '../network/graph';
+import { RoadModel, type ModelEvent } from './model';
 import { nearestRoad, pointAtS, projectOnRoad } from './pathTools';
+import { connectEnd, defaultIds, dissolveNode, findConnectTarget, moveNode, setNodeRadius, type ConnectTarget } from './ops';
 import { PRESET_SOURCES } from '../profile/presets';
 
 export interface EditorHost {
@@ -50,6 +52,8 @@ export interface EditorState {
   tool: Tool;
   roadId?: string;
   pointIndex?: number;
+  /** selected junction */
+  nodeId?: string;
   activeProfile: string;
   status: { text: string; kind: StatusKind };
   libraryDirty: boolean;
@@ -75,7 +79,8 @@ export class RoadEditor {
   private libraryRevision: number | undefined;
   private handleMeshes: THREE.Mesh[] = [];
   private handlesDirty = true;
-  private drag: { pointer: number; index: number } | null = null;
+  private drag: { pointer: number; kind: 'point' | 'node'; index: number; nodeId?: string } | null = null;
+  private nodeMeshes: THREE.Mesh[] = [];
   private down: { x: number; y: number; t: number; shift: boolean } | null = null;
   private readonly raycaster = new THREE.Raycaster();
   private readonly cleanups: Array<() => void> = [];
@@ -137,20 +142,21 @@ export class RoadEditor {
 
   // ---- model → system ------------------------------------------------------
 
-  private onModel(e: import('./model').ModelEvent): void {
+  private onModel(e: ModelEvent): void {
     switch (e.type) {
-      case 'road': this.system.upsertRoad(e.road); this.handlesDirty = true; break;
       case 'remove':
-        this.system.removeRoad(e.id);
         if (this.state.roadId === e.id) { this.state.roadId = undefined; this.state.pointIndex = undefined; }
-        this.handlesDirty = true;
         break;
       case 'reset':
-        this.system.setRoads(this.model.list as RoadDef[]);
-        this.state.roadId = undefined; this.state.pointIndex = undefined;
+        this.state.roadId = undefined; this.state.pointIndex = undefined; this.state.nodeId = undefined;
+        break;
+      case 'changed':
+        // one sync per change: the system diffs by identity and rebuilds only what differs
+        this.system.setNetwork(this.model.list, this.model.nodeList);
+        if (this.state.nodeId && !this.model.getNode(this.state.nodeId)) this.state.nodeId = undefined;
         this.handlesDirty = true;
         break;
-      case 'history': break;
+      default: break;
     }
     this.emit();
   }
@@ -226,6 +232,15 @@ export class RoadEditor {
   selectRoad(id: string | undefined): void {
     this.state.roadId = id;
     this.state.pointIndex = undefined;
+    this.state.nodeId = undefined;
+    this.handlesDirty = true;
+    this.emit();
+  }
+
+  selectNode(id: string | undefined): void {
+    this.state.nodeId = id;
+    this.state.roadId = undefined;
+    this.state.pointIndex = undefined;
     this.handlesDirty = true;
     this.emit();
   }
@@ -269,9 +284,20 @@ export class RoadEditor {
     }, key);
   }
 
+  /** Is point `index` of road `id` an end that hangs on a junction? */
+  isNodeEnd(id: string, index: number): boolean {
+    const r = this.model.get(id) ?? (this.draft?.id === id ? this.draft : undefined);
+    if (!r) return false;
+    return (index === 0 && !!r.startNode) || (index === r.points.length - 1 && !!r.endNode);
+  }
+
   deleteSelectedPoint(): void {
     const id = this.state.roadId, idx = this.state.pointIndex;
     if (!id || idx === undefined) return;
+    if (this.isNodeEnd(id, idx)) {
+      this.setStatus('Dieser Endpunkt hängt an einer Kreuzung – Kreuzung zuerst auflösen.', 'error');
+      return;
+    }
     this.model.edit(id, 'Punkt löschen', (d) => { d.points.splice(idx, 1); });
     this.state.pointIndex = undefined;
     this.handlesDirty = true;
@@ -280,6 +306,38 @@ export class RoadEditor {
 
   deleteSelectedRoad(): void {
     if (this.state.roadId) this.model.removeRoad(this.state.roadId);
+  }
+
+  // ---- junctions -------------------------------------------------------------
+
+  get selectedNode(): NodeDef | undefined {
+    return this.state.nodeId ? this.model.getNode(this.state.nodeId) : undefined;
+  }
+
+  /** The road ends meeting at a node, with road names (for the inspector). */
+  nodeArms(id: string): Array<{ roadId: string; name: string; end: End }> {
+    return (armsByNode(this.model.list).get(id) ?? []).map((a) => ({ roadId: a.roadId, end: a.end, name: this.model.get(a.roadId)?.name ?? a.roadId }));
+  }
+
+  setNodeRadius(radius: number): void {
+    const id = this.state.nodeId;
+    if (id) this.model.transact('Kurvenradius ändern', (d) => setNodeRadius(d, id, radius), `radius:${id}`);
+  }
+
+  dissolveSelectedNode(): void {
+    const id = this.state.nodeId;
+    if (!id) return;
+    this.model.transact('Kreuzung auflösen', (d) => dissolveNode(d, id));
+    this.selectNode(undefined);
+  }
+
+  private connectTargets(): Array<{ def: RoadDef; sampled: import('../core/sampling').SampledRoad }> {
+    return this.system.runtimes.map((r) => ({ def: r.def, sampled: r.sampled }));
+  }
+
+  /** What would an end of `roadId` at (x, zThree) connect to? */
+  private targetAt(x: number, zThree: number, roadId: string): ConnectTarget | undefined {
+    return findConnectTarget(this.connectTargets(), this.model.nodeList, x, zThree, { snapM: 9, roadSnapM: 7, endMarginM: 10, excludeRoad: roadId });
   }
 
   insertPoint(roadId: string, x: number, zThree: number, groundY?: number): void {
@@ -291,8 +349,8 @@ export class RoadEditor {
     this.selectPoint(index);
   }
 
-  undo(): void { this.model.undo(); }
-  redo(): void { this.model.redo(); }
+  undo(): void { this.cancelDraft(); this.model.undo(); }
+  redo(): void { this.cancelDraft(); this.model.redo(); }
 
   // ---- profile code (live) ---------------------------------------------------
 
@@ -352,8 +410,25 @@ export class RoadEditor {
     if (!d) return;
     this.draft = null;
     if (d.points.length < 2) { this.system.removeRoad(d.id); this.state.roadId = undefined; this.handlesDirty = true; this.emit(); return; }
-    this.model.addRoad(d); // replaces the draft in the system without a flicker, with an undo step
+    // connect both ends to whatever they were drawn onto — all in ONE undo step (road, node, split)
+    const first = d.points[0], last = d.points[d.points.length - 1];
+    const tStart = this.targetAt(first.x, -first.z, d.id);
+    const tEnd = this.targetAt(last.x, -last.z, d.id);
+    let connected = 0;
+    this.model.transact('Straße zeichnen', (draft) => {
+      draft.setRoad(cloneRoad(d));
+      const splitDone = new Set<string>();
+      for (const [end, t] of [['start', tStart], ['end', tEnd]] as Array<[End, ConnectTarget | undefined]>) {
+        if (!t) continue;
+        if (t.kind === 'road') {
+          if (splitDone.has(t.roadId)) continue; // a second split on the same road would use stale arc lengths
+          splitDone.add(t.roadId);
+        }
+        if (connectEnd(draft, d.id, end, t, defaultIds)) connected++;
+      }
+    });
     this.selectRoad(d.id);
+    if (connected) this.setStatus(connected === 2 ? 'Straße an beiden Enden angeschlossen' : 'Straße angeschlossen', 'ok');
   }
 
   cancelDraft(): void {
@@ -376,14 +451,30 @@ export class RoadEditor {
   // ---- handles ---------------------------------------------------------------
 
   private rebuildHandles(): void {
-    for (const m of this.handleMeshes) { this.handles.remove(m); (m.material as THREE.Material).dispose(); }
+    for (const m of [...this.handleMeshes, ...this.nodeMeshes]) { this.handles.remove(m); (m.material as THREE.Material).dispose(); }
     this.handleMeshes = [];
+    this.nodeMeshes = [];
+
+    // junction markers (always visible): the node centre, at the patch height once built
+    for (const n of this.model.nodeList) {
+      const jr = this.system.junctions.find((j) => j.id === n.id);
+      const y = jr?.patch?.centerY ?? n.y;
+      const mat = new THREE.MeshBasicMaterial({ color: n.id === this.state.nodeId ? 0xffffff : 0xffc400, depthTest: false, transparent: true, opacity: 0.9 });
+      const m = new THREE.Mesh(this.sphere, mat);
+      m.position.set(n.x, y + 1.2, -n.z);
+      m.renderOrder = 99;
+      m.userData.nodeId = n.id;
+      m.userData.nodeMarker = true;
+      this.handles.add(m);
+      this.nodeMeshes.push(m);
+    }
+
     const road = this.selectedRoad;
-    if (!road) return;
+    if (!road) { this.handlesDirty = false; return; }
     const rt = this.system.runtimes.find((r) => r.def.id === road.id);
     road.points.forEach((p, k) => {
       const mode = p.mode ?? 'road';
-      const color = k === this.state.pointIndex ? 0xff9a2e : mode === 'bridge' ? 0x5fb0ff : mode === 'tunnel' ? 0xc08cff : mode === 'gallery' ? 0xe0c060 : isFixedPoint(p) ? 0x8ff0b0 : 0xffffff;
+      const color = k === this.state.pointIndex ? 0xff9a2e : this.isNodeEnd(road.id, k) ? 0xffc400 : mode === 'bridge' ? 0x5fb0ff : mode === 'tunnel' ? 0xc08cff : mode === 'gallery' ? 0xe0c060 : isFixedPoint(p) ? 0x8ff0b0 : 0xffffff;
       const mat = new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.95 });
       const m = new THREE.Mesh(this.sphere, mat);
       const y = rt ? rt.pointDesignY(k) : p.y;
@@ -410,10 +501,8 @@ export class RoadEditor {
     }
     if (this.handlesDirty) this.rebuildHandles();
     const cam = this.host.camera.position;
-    for (const m of this.handleMeshes) {
-      const s = Math.max(0.4, m.position.distanceTo(cam) * HANDLE_PX);
-      m.scale.setScalar(s);
-    }
+    for (const m of this.handleMeshes) m.scale.setScalar(Math.max(0.4, m.position.distanceTo(cam) * HANDLE_PX));
+    for (const m of this.nodeMeshes) m.scale.setScalar(Math.max(0.6, m.position.distanceTo(cam) * HANDLE_PX * 1.5));
   }
 
   // ---- input -----------------------------------------------------------------
@@ -430,6 +519,13 @@ export class RoadEditor {
     return hit ? (hit.object.userData.index as number) : undefined;
   }
 
+  private pickNode(ev: { clientX: number; clientY: number }): string | undefined {
+    if (!this.nodeMeshes.length) return undefined;
+    this.raycaster.setFromCamera(this.ndc(ev), this.host.camera);
+    const hit = this.raycaster.intersectObjects(this.nodeMeshes, false)[0];
+    return hit ? (hit.object.userData.nodeId as string) : undefined;
+  }
+
   private bindInput(): void {
     const el = this.host.domElement;
     const on = <K extends keyof HTMLElementEventMap>(t: EventTarget, type: K, fn: (e: HTMLElementEventMap[K]) => void, capture = false): void => {
@@ -442,10 +538,26 @@ export class RoadEditor {
       this.down = { x: e.clientX, y: e.clientY, t: e.timeStamp, shift: e.shiftKey }; // event time, not handling time: robust against slow frames
       if (this.state.tool !== 'select') return;
       const idx = this.pickHandle(e);
-      if (idx === undefined) return;
-      this.drag = { pointer: e.pointerId, index: idx };
-      this.selectPoint(idx);
-      if (this.state.roadId) this.model.holdCoalesce(`drag:${this.state.roadId}:${idx}`);
+      const nodeId = idx === undefined ? this.pickNode(e) : undefined;
+      if (idx === undefined && nodeId === undefined) return;
+      if (idx !== undefined) {
+        const id = this.state.roadId;
+        const r = id ? this.selectedRoad : undefined;
+        // an end that hangs on a junction drags the junction (and with it every road that meets there)
+        const attached = r && id && this.isNodeEnd(id, idx) ? (idx === 0 ? r.startNode : r.endNode) : undefined;
+        if (attached) {
+          this.drag = { pointer: e.pointerId, kind: 'node', index: idx, nodeId: attached };
+          this.model.holdCoalesce(`dragnode:${attached}`);
+        } else {
+          this.drag = { pointer: e.pointerId, kind: 'point', index: idx };
+          if (id) this.model.holdCoalesce(`drag:${id}:${idx}`);
+        }
+        this.selectPoint(idx);
+      } else {
+        this.selectNode(nodeId);
+        this.drag = { pointer: e.pointerId, kind: 'node', index: -1, nodeId };
+        this.model.holdCoalesce(`dragnode:${nodeId}`);
+      }
       this.host.setCameraEnabled(false);
       el.setPointerCapture?.(e.pointerId);
       e.stopImmediatePropagation(); // keep the game's orbit/camera controls out of it
@@ -454,6 +566,11 @@ export class RoadEditor {
     on(el, 'pointermove', (e) => {
       if (!this.drag || e.pointerId !== this.drag.pointer) return;
       const hit = this.host.pickGround(e);
+      if (hit && this.drag.kind === 'node' && this.drag.nodeId) {
+        const nid = this.drag.nodeId;
+        this.model.transact('Kreuzung verschieben', (d) => moveNode(d, nid, hit.x, hit.y, -hit.z), `dragnode:${nid}`);
+        return;
+      }
       const id = this.state.roadId;
       if (!hit || !id) return;
       const idx = this.drag.index;
@@ -467,8 +584,20 @@ export class RoadEditor {
 
     const endDrag = (e: PointerEvent): void => {
       if (!this.drag || e.pointerId !== this.drag.pointer) return;
+      const d = this.drag;
       this.drag = null;
       this.model.holdCoalesce(null);
+      // a free road end dropped onto a node / another road's end / another road joins it there
+      const id = this.state.roadId;
+      const road = id ? this.model.get(id) : undefined;
+      if (d.kind === 'point' && id && road && (d.index === 0 || d.index === road.points.length - 1) && !this.isNodeEnd(id, d.index)) {
+        const end: End = d.index === 0 ? 'start' : 'end';
+        const p = road.points[d.index];
+        const target = this.targetAt(p.x, -p.z, id);
+        if (target && this.model.transact('Straße verbinden', (draft) => { connectEnd(draft, id, end, target, defaultIds); })) {
+          this.setStatus('Straße verbunden', 'ok');
+        }
+      }
       this.host.setCameraEnabled(true);
       this.down = null;
       this.handlesDirty = true;
@@ -545,14 +674,14 @@ export class RoadEditor {
       else if (e.key === 'Backspace' && this.draft) { this.draft.points.pop(); this.updateDraft(); }
       return;
     }
-    if (e.key === 'Delete' || e.key === 'Backspace') this.deleteSelectedPoint();
-    else if (e.key === 'Escape') { this.state.pointIndex !== undefined ? this.selectPoint(undefined) : this.selectRoad(undefined); }
+    if (e.key === 'Delete' || e.key === 'Backspace') { this.state.nodeId ? this.dissolveSelectedNode() : this.deleteSelectedPoint(); }
+    else if (e.key === 'Escape') { this.state.pointIndex !== undefined ? this.selectPoint(undefined) : this.state.nodeId ? this.selectNode(undefined) : this.selectRoad(undefined); }
   }
 
   dispose(): void {
     for (const c of this.cleanups) c();
     this.cleanups.length = 0;
-    for (const m of this.handleMeshes) (m.material as THREE.Material).dispose();
+    for (const m of [...this.handleMeshes, ...this.nodeMeshes]) (m.material as THREE.Material).dispose();
     this.host.scene.remove(this.handles);
     this.sphere.dispose();
     this.listeners.clear();

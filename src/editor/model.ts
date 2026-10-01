@@ -1,38 +1,93 @@
-// The editable road document: a list of immutable road snapshots plus undo/redo.
-// Every edit replaces a road with a new snapshot (never mutates one), so other
-// parts (RoadSystem runtimes, mesh layer) can hold on to old snapshots safely.
-// Edits that share a `coalesceKey` within a short window (slider drags, handle
-// drags) merge into one undo step.
+// The editable road network (roads + junction nodes) with undo/redo.
+//
+// State is an immutable snapshot { roads, nodes } of immutable objects. Every edit builds a new
+// snapshot that shares all unchanged objects with the old one; history is just a stack of
+// (before, after) snapshot pairs. That makes compound edits — split a road, create a node, connect
+// two roads — a single undo step, and lets the RoadSystem diff by object identity.
+// Edits that share a `coalesceKey` within a short window (slider drags) — or inside an explicitly
+// held gesture (handle drags) — merge into one undo step.
 
-import { cloneRoad, sanitizeRoadsDocument } from '../network/doc';
-import type { RoadDef, RoadsDocument } from '../network/types';
+import { cloneNode, cloneRoad, sanitizeRoadsDocument } from '../network/doc';
+import { normalizeNetwork } from '../network/graph';
+import type { NodeDef, RoadDef, RoadsDocument } from '../network/types';
 import { ROADS_DOC_VERSION } from '../network/types';
 
 export type ModelEvent =
   | { type: 'road'; road: RoadDef }          // added or replaced
   | { type: 'remove'; id: string }
+  | { type: 'nodes' }                        // the node list changed
   | { type: 'reset' }                        // whole document replaced
+  | { type: 'changed' }                      // exactly once after every change of the network
   | { type: 'history' };                     // undo/redo availability or dirty state changed
 
-interface Command {
+export interface Snapshot {
+  readonly roads: readonly RoadDef[];
+  readonly nodes: readonly NodeDef[];
+}
+
+/** Mutable working copy handed to `transact`; arrays are private copies, objects must be replaced not mutated. */
+export class NetworkDraft {
+  roads: RoadDef[];
+  nodes: NodeDef[];
+
+  constructor(snap: Snapshot) {
+    this.roads = snap.roads.slice();
+    this.nodes = snap.nodes.slice();
+  }
+
+  road(id: string): RoadDef | undefined { return this.roads.find((r) => r.id === id); }
+  node(id: string): NodeDef | undefined { return this.nodes.find((n) => n.id === id); }
+
+  setRoad(road: RoadDef): void {
+    const i = this.roads.findIndex((r) => r.id === road.id);
+    if (i >= 0) this.roads[i] = road; else this.roads.push(road);
+  }
+  removeRoad(id: string): void { this.roads = this.roads.filter((r) => r.id !== id); }
+
+  /** Edit a copy of a road in place of the original. */
+  editRoad(id: string, fn: (draft: RoadDef) => void): RoadDef | undefined {
+    const cur = this.road(id);
+    if (!cur) return undefined;
+    const d = cloneRoad(cur);
+    fn(d);
+    d.id = id;
+    this.setRoad(d);
+    return d;
+  }
+
+  setNode(node: NodeDef): void {
+    const i = this.nodes.findIndex((n) => n.id === node.id);
+    if (i >= 0) this.nodes[i] = node; else this.nodes.push(node);
+  }
+  removeNode(id: string): void { this.nodes = this.nodes.filter((n) => n.id !== id); }
+  editNode(id: string, fn: (draft: NodeDef) => void): NodeDef | undefined {
+    const cur = this.node(id);
+    if (!cur) return undefined;
+    const d = cloneNode(cur);
+    fn(d);
+    d.id = id;
+    this.setNode(d);
+    return d;
+  }
+}
+
+interface Entry {
   label: string;
   key?: string;
   time: number;
-  id: string;
-  /** state before/after; null = road does not exist */
-  before: RoadDef | null;
-  after: RoadDef | null;
-  /** position in the list when removed, to restore order on undo */
-  index: number;
+  before: Snapshot;
+  after: Snapshot;
 }
 
 const COALESCE_MS = 900;
 const HISTORY_LIMIT = 200;
 
+const sameList = <T,>(a: readonly T[], b: readonly T[]): boolean => a.length === b.length && a.every((x, i) => x === b[i]);
+
 export class RoadModel {
-  private roads: RoadDef[] = [];
-  private undoStack: Command[] = [];
-  private redoStack: Command[] = [];
+  private snap: Snapshot = { roads: [], nodes: [] };
+  private undoStack: Entry[] = [];
+  private redoStack: Entry[] = [];
   private listeners = new Set<(e: ModelEvent) => void>();
   private coalescing = true;
   private hold: string | null = null;
@@ -44,13 +99,10 @@ export class RoadModel {
 
   // ---- reading ----
 
-  get list(): readonly RoadDef[] {
-    return this.roads;
-  }
-
-  get(id: string): RoadDef | undefined {
-    return this.roads.find((r) => r.id === id);
-  }
+  get list(): readonly RoadDef[] { return this.snap.roads; }
+  get nodeList(): readonly NodeDef[] { return this.snap.nodes; }
+  get(id: string): RoadDef | undefined { return this.snap.roads.find((r) => r.id === id); }
+  getNode(id: string): NodeDef | undefined { return this.snap.nodes.find((n) => n.id === id); }
 
   get canUndo(): boolean { return this.undoStack.length > 0; }
   get canRedo(): boolean { return this.redoStack.length > 0; }
@@ -71,17 +123,23 @@ export class RoadModel {
 
   load(doc: RoadsDocument): void {
     const clean = sanitizeRoadsDocument(doc);
-    this.roads = clean.roads;
+    this.snap = { roads: clean.roads, nodes: clean.nodes ?? [] };
     this.revision = clean.revision;
     this.undoStack = [];
     this.redoStack = [];
     this.savedMark = 0;
     this.emit({ type: 'reset' });
+    this.emit({ type: 'changed' });
     this.emit({ type: 'history' });
   }
 
   toDocument(): RoadsDocument {
-    return { version: ROADS_DOC_VERSION, ...(this.revision !== undefined ? { revision: this.revision } : {}), roads: this.roads.map(cloneRoad) };
+    return {
+      version: ROADS_DOC_VERSION,
+      ...(this.revision !== undefined ? { revision: this.revision } : {}),
+      roads: this.snap.roads.map(cloneRoad),
+      ...(this.snap.nodes.length ? { nodes: this.snap.nodes.map(cloneNode) } : {}),
+    };
   }
 
   markSaved(revision: number): void {
@@ -107,83 +165,88 @@ export class RoadModel {
     if (key === null) this.coalescing = false;
   }
 
+  /** One undoable step that may touch any number of roads and nodes. Returns false if nothing changed. */
+  transact(label: string, fn: (draft: NetworkDraft) => void, coalesceKey?: string): boolean {
+    const draft = new NetworkDraft(this.snap);
+    fn(draft);
+    const net = normalizeNetwork(draft.roads.filter((r) => r.points.length >= 2), draft.nodes);
+    const after: Snapshot = { roads: net.roads, nodes: net.nodes };
+    if (sameList(after.roads, this.snap.roads) && sameList(after.nodes, this.snap.nodes)) return false;
+    this.commit({ label, key: coalesceKey, time: this.now(), before: this.snap, after });
+    return true;
+  }
+
   addRoad(road: RoadDef, label = 'Straße hinzufügen'): void {
-    const snap = cloneRoad(road);
-    this.apply({ label, time: this.now(), id: snap.id, before: null, after: snap, index: this.roads.length });
+    this.transact(label, (d) => d.setRoad(cloneRoad(road)));
   }
 
   removeRoad(id: string, label = 'Straße löschen'): void {
-    const idx = this.roads.findIndex((r) => r.id === id);
-    if (idx < 0) return;
-    this.apply({ label, time: this.now(), id, before: this.roads[idx], after: null, index: idx });
+    this.transact(label, (d) => d.removeRoad(id));
   }
 
-  /** Edit a road: `fn` receives a private copy to mutate. Returns the new snapshot. */
+  /** Edit a road: `fn` receives a private copy to mutate. Returns the new snapshot (undefined if the road is gone). */
   edit(id: string, label: string, fn: (draft: RoadDef) => void, coalesceKey?: string): RoadDef | undefined {
-    const cur = this.get(id);
-    if (!cur) return undefined;
-    const draft = cloneRoad(cur);
-    fn(draft);
-    draft.id = id; // ids are stable
-    if (draft.points.length < 2) {
-      this.removeRoad(id, label);
-      return undefined;
-    }
-    this.apply({ label, key: coalesceKey, time: this.now(), id, before: cur, after: draft, index: this.roads.indexOf(cur) });
-    return draft;
+    if (!this.get(id)) return undefined;
+    this.transact(label, (d) => { d.editRoad(id, fn); }, coalesceKey);
+    return this.get(id);
   }
 
-  private apply(cmd: Command): void {
+  private commit(entry: Entry): void {
     const top = this.undoStack[this.undoStack.length - 1];
     const merge =
-      this.coalescing && cmd.key !== undefined && top && top.key === cmd.key && top.id === cmd.id &&
-      (this.hold === cmd.key || cmd.time - top.time < COALESCE_MS) && this.redoStack.length === 0 && this.savedMark !== this.undoStack.length;
+      this.coalescing && entry.key !== undefined && top && top.key === entry.key &&
+      (this.hold === entry.key || entry.time - top.time < COALESCE_MS) &&
+      this.redoStack.length === 0 && this.savedMark !== this.undoStack.length;
     this.coalescing = true;
+    const prev = this.snap;
+    this.snap = entry.after;
     if (merge) {
-      top.after = cmd.after;
-      top.time = cmd.time;
-      this.set(cmd.id, cmd.after, cmd.index);
-      this.emit({ type: 'history' });
-      return;
+      top.after = entry.after;
+      top.time = entry.time;
+    } else {
+      this.undoStack.push(entry);
+      if (this.undoStack.length > HISTORY_LIMIT) {
+        this.undoStack.shift();
+        this.savedMark = this.savedMark > 0 ? this.savedMark - 1 : -1;
+      }
+      this.redoStack = [];
     }
-    this.set(cmd.id, cmd.after, cmd.index);
-    this.undoStack.push(cmd);
-    if (this.undoStack.length > HISTORY_LIMIT) {
-      this.undoStack.shift();
-      this.savedMark = this.savedMark > 0 ? this.savedMark - 1 : -1;
-    }
-    this.redoStack = [];
+    this.emitDiff(prev, entry.after);
     this.emit({ type: 'history' });
   }
 
-  private set(id: string, road: RoadDef | null, index: number): void {
-    const idx = this.roads.findIndex((r) => r.id === id);
-    if (road === null) {
-      if (idx >= 0) this.roads.splice(idx, 1);
-      this.emit({ type: 'remove', id });
-    } else {
-      if (idx >= 0) this.roads[idx] = road;
-      else this.roads.splice(Math.min(index, this.roads.length), 0, road);
-      this.emit({ type: 'road', road });
+  private emitDiff(a: Snapshot, b: Snapshot): void {
+    const before = new Map(a.roads.map((r) => [r.id, r]));
+    const after = new Set<string>();
+    for (const r of b.roads) {
+      after.add(r.id);
+      if (before.get(r.id) !== r) this.emit({ type: 'road', road: r });
     }
+    for (const id of before.keys()) if (!after.has(id)) this.emit({ type: 'remove', id });
+    if (!sameList(a.nodes, b.nodes)) this.emit({ type: 'nodes' });
+    this.emit({ type: 'changed' });
   }
 
   undo(): boolean {
-    const cmd = this.undoStack.pop();
-    if (!cmd) return false;
-    this.set(cmd.id, cmd.before, cmd.index);
-    this.redoStack.push(cmd);
+    const e = this.undoStack.pop();
+    if (!e) return false;
+    const prev = this.snap;
+    this.snap = e.before;
+    this.redoStack.push(e);
     this.coalescing = false;
+    this.emitDiff(prev, this.snap);
     this.emit({ type: 'history' });
     return true;
   }
 
   redo(): boolean {
-    const cmd = this.redoStack.pop();
-    if (!cmd) return false;
-    this.set(cmd.id, cmd.after, cmd.index);
-    this.undoStack.push(cmd);
+    const e = this.redoStack.pop();
+    if (!e) return false;
+    const prev = this.snap;
+    this.snap = e.after;
+    this.undoStack.push(e);
     this.coalescing = false;
+    this.emitDiff(prev, this.snap);
     this.emit({ type: 'history' });
     return true;
   }

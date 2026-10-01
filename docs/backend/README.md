@@ -22,8 +22,8 @@ portabel gehalten (Compare-and-Swap per `UPDATE … WHERE revision = ?`), `schem
 ## Protokoll
 
 ```
-GET  roads-save.php?location=<loc>        200 { roads: [...], revision }      404 = noch nichts gespeichert
-POST roads-save.php                       Body { location, roads, baseRevision? }
+GET  roads-save.php?location=<loc>        200 { roads: [...], nodes: [...], revision }   404 = noch nichts gespeichert
+POST roads-save.php                       Body { location, roads, nodes?, baseRevision? }
                                           200 { ok: true, revision }
                                           409 { ok: false, conflict: true, revision }   ← Server ist weiter
                                           400 ungültige Eingabe · 403 keine Editor-Rechte · 413 zu groß
@@ -31,6 +31,8 @@ GET  roadlib-save.php                     200 { profiles: { name: source }, revi
 POST roadlib-save.php                     Body { profiles, baseRevision? }  (Antworten wie oben)
 ```
 
+- `nodes` = Kreuzungen (`{ id, x, y, z, radius? }`); Straßen verweisen per `startNode`/`endNode` darauf. Beides gehört in dasselbe Dokument
+  und dieselbe Revision, damit ein Speichern nie ein halbes Netz hinterlässt.
 - `baseRevision` = die Revision, auf der die Änderung des Editors beruht. Fehlt sie, wird überschrieben
   (der Editor sendet das erst, nachdem der Benutzer einen Konflikt bestätigt hat).
 - Der Client probiert zuerst eine statische Datei `api/roads-<loc>.json` (wie bei Flüssen) und fällt dann

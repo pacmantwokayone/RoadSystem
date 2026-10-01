@@ -13,9 +13,10 @@ import type { RoadDef } from '../network/types';
 import type { TerrainSource } from '../core/terrain';
 import { dependencyRadius, designHeightAt, windowRange } from '../core/alignment';
 import { makeFrame, type Frame } from '../core/frames';
-import { sampleRoad, DEFAULT_SAMPLE_OPTIONS, type RoadSample, type SampledRoad, type SampleOptions } from '../core/sampling';
+import { sampleRoad, DEFAULT_SAMPLE_OPTIONS, NO_TRIM, type RoadSample, type SampledRoad, type SampleOptions, type Trim } from '../core/sampling';
 import { flipZ } from '../core/world';
 import type { ProfileData } from '../profile/types';
+import type { End } from '../network/graph';
 
 export interface RoadRuntimeOptions {
   sample: SampleOptions;
@@ -78,12 +79,13 @@ export class RoadRuntime {
     private readonly terrain: TerrainSource,
     profile: ProfileData,
     readonly opts: RoadRuntimeOptions = DEFAULT_RUNTIME_OPTIONS,
+    readonly trim: Trim = NO_TRIM,
   ) {
     this.def = def;
     this.profile = profile;
     this.seed = hashString(def.id);
     this.smoothRadiusM = profile.smoothRadiusM ?? opts.smoothRadiusM;
-    this.sampled = sampleRoad(def, opts.sample);
+    this.sampled = sampleRoad(def, opts.sample, trim);
     this.samples = this.sampled.samples;
     const n = this.samples.length;
     this.lat = Array.from({ length: 5 }, () => new Float64Array(n).fill(NaN));
@@ -118,6 +120,33 @@ export class RoadRuntime {
   pointDesignY(k: number): number {
     const y = this.designY[this.sampled.pointSample[k]];
     return Number.isNaN(y) ? this.def.points[k].y : y;
+  }
+
+  /** Sample index at a road end (after trimming). */
+  endIndex(end: End): number {
+    return end === 'start' ? 0 : this.samples.length - 1;
+  }
+
+  /** The chunk that contains a road end. */
+  endChunk(end: End): RoadChunk {
+    return end === 'start' ? this.chunks[0] : this.chunks[this.chunks.length - 1];
+  }
+
+  endReady(end: End): boolean {
+    return this.endChunk(end).state === 'ready';
+  }
+
+  /** Cross-section at a road end: centre (at design height), frame, and the carriageway half width. */
+  endCross(end: End): { index: number; pos: Vector3; frame: Frame; halfCore: number; widthScale: number } {
+    const index = this.endIndex(end);
+    const s = this.samples[index];
+    return {
+      index,
+      pos: new Vector3(s.pos.x, this.designY[index], s.pos.z),
+      frame: this.designFrame(index),
+      halfCore: this.profile.coreHalfWidth * s.widthScale,
+      widthScale: s.widthScale,
+    };
   }
 
   get pendingCount(): number {

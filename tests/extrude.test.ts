@@ -53,7 +53,7 @@ describe('extrusion', () => {
     const { geometry, materials } = buildChunkGeometry(rt, chunk);
     const S = rt.profile.points.length - 1;
     const rings = chunk.i1 - chunk.i0 + 1;
-    expect(geometry.getAttribute('position').count).toBe(rings * (S * 2 + 6));
+    expect(geometry.getAttribute('position').count).toBe(rings * (S * 2 + 6) + 2 * rt.profile.points.length); // + the start cap
     expect(materials).toContain('asphalt');
     expect(materials).toContain('subgrade');
     expect(new Set(materials).size).toBe(materials.length);
@@ -105,7 +105,7 @@ describe('extrusion', () => {
     const g0 = buildChunkGeometry(rt, rt.chunks[0]).geometry.getAttribute('position');
     const g1 = buildChunkGeometry(rt, rt.chunks[1]).geometry.getAttribute('position');
     const V = rt.profile.points.length * 2 - 2 + 6;
-    const lastRing = g0.count - V;
+    const lastRing = (rt.chunks[0].i1 - rt.chunks[0].i0) * V; // ring vertices come first, caps are appended after
     for (let v = 0; v < V; v++) {
       expect(g1.getX(v)).toBeCloseTo(g0.getX(lastRing + v), 5);
       expect(g1.getY(v)).toBeCloseTo(g0.getY(lastRing + v), 5);

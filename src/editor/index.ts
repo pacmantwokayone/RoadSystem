@@ -2,6 +2,7 @@
 
 export * from './model';
 export * from './pathTools';
+export * from './ops';
 export * from './profilePreview';
 export * from './roadEditor';
 export { mountEditorPanels, type PanelDeps } from './panels';

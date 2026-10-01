@@ -1,6 +1,6 @@
 <?php
-// GET  roads-save.php?location=<loc>            → { roads: [...], revision }      (public, players load this)
-// POST roads-save.php { location, roads, baseRevision? }                          (editors only)
+// GET  roads-save.php?location=<loc>            → { roads: [...], nodes: [...], revision }   (public, players load this)
+// POST roads-save.php { location, roads, nodes?, baseRevision? }                              (editors only)
 //        200 { ok: true, revision }   409 { ok: false, conflict: true, revision } 4xx/5xx { error }
 // Same idiom as rivers-save.php: whole-document replace, one document per location.
 declare(strict_types=1);
@@ -18,7 +18,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     if ($row === null) {
         roads_respond(404, ['error' => 'not found']);
     }
-    roads_respond(200, ['roads' => $row['doc']['roads'] ?? [], 'revision' => $row['revision']]);
+    roads_respond(200, ['roads' => $row['doc']['roads'] ?? [], 'nodes' => $row['doc']['nodes'] ?? [], 'revision' => $row['revision']]);
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -37,7 +37,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             roads_respond(400, ['error' => 'each road needs id (string) and points (array)']);
         }
     }
-    $res = $docs->save("roads:$loc", ['roads' => $roads], roads_base_revision($body), $user);
+    $nodes = $body['nodes'] ?? [];
+    if (!is_array($nodes) || !array_is_list($nodes)) {
+        roads_respond(400, ['error' => 'nodes must be a list']);
+    }
+    foreach ($nodes as $n) {
+        if (!is_array($n) || !isset($n['id'], $n['x'], $n['y'], $n['z']) || !is_string($n['id'])
+            || !is_numeric($n['x']) || !is_numeric($n['y']) || !is_numeric($n['z'])) {
+            roads_respond(400, ['error' => 'each node needs id (string) and numeric x, y, z']);
+        }
+    }
+    $res = $docs->save("roads:$loc", ['roads' => $roads, 'nodes' => $nodes], roads_base_revision($body), $user);
     if ($res['conflict']) {
         roads_respond(409, ['ok' => false, 'conflict' => true, 'revision' => $res['revision']]);
     }

@@ -1,22 +1,26 @@
-// Turns ready chunks into meshes. Subscribes to a RoadSystem: a mesh is built
-// the moment its chunk's terrain has settled and removed when its road goes away.
+// Turns ready chunks and junction patches into meshes. Subscribes to a RoadSystem: a mesh is built
+// the moment its terrain has settled and removed when its road / junction goes away.
 //
-// When a road is REPLACED (edited), the previous version's meshes stay visible
-// until the new version is completely built, then they are disposed — so
-// dragging a point or tweaking a profile never makes the road blink out.
+// When something is REPLACED (edited), the previous version's meshes stay visible until the new
+// version is completely built, then they are disposed — so dragging a point or tweaking a profile
+// never makes the road blink out.
 
 import * as THREE from 'three';
 import type { RoadSystem } from '../runtime/roadSystem';
 import type { RoadRuntime, RoadChunk } from '../runtime/roadRuntime';
+import type { JunctionRuntime } from '../runtime/junctionRuntime';
 import type { MaterialRegistry } from '../surface/materials';
 import { buildChunkGeometry, DEFAULT_EXTRUDE_OPTIONS, type ExtrudeOptions } from './extrude';
+import { buildJunctionGeometry } from './junctionMesh';
+
+type Owner = RoadRuntime | JunctionRuntime;
 
 export class RoadMeshLayer {
   readonly group = new THREE.Group();
-  /** meshes per runtime (a runtime = one version of one road) */
-  private byRuntime = new Map<RoadRuntime, Map<number, THREE.Mesh>>();
-  /** older versions still shown until the newest version of the same road is complete */
-  private retired = new Map<string, RoadRuntime[]>();
+  /** meshes per runtime (a runtime = one version of one road / junction) */
+  private byRuntime = new Map<Owner, Map<number, THREE.Mesh>>();
+  /** older versions still shown until the newest version with the same owner id is complete */
+  private retired = new Map<string, Owner[]>();
   private readonly unsub: Array<() => void> = [];
 
   constructor(
@@ -25,13 +29,12 @@ export class RoadMeshLayer {
     private readonly extrude: ExtrudeOptions = DEFAULT_EXTRUDE_OPTIONS,
   ) {
     this.group.name = 'roads';
-    this.unsub.push(system.onChunkReady((rt, chunk) => this.build(rt, chunk)));
-    this.unsub.push(system.onRoadRemoved((rt) => this.removeRoad(rt.def.id)));
-    this.unsub.push(system.onRoadReplaced((prev) => {
-      const list = this.retired.get(prev.def.id) ?? [];
-      list.push(prev);
-      this.retired.set(prev.def.id, list);
-    }));
+    this.unsub.push(system.onChunkReady((rt, chunk) => this.buildChunk(rt, chunk)));
+    this.unsub.push(system.onRoadRemoved((rt) => this.removeOwner(`r:${rt.def.id}`)));
+    this.unsub.push(system.onRoadReplaced((prev) => this.retire(`r:${prev.def.id}`, prev)));
+    this.unsub.push(system.onJunctionReady((j) => this.buildJunction(j)));
+    this.unsub.push(system.onJunctionRemoved((j) => this.removeOwner(`j:${j.id}`)));
+    this.unsub.push(system.onJunctionReplaced((prev) => this.retire(`j:${prev.id}`, prev)));
   }
 
   get meshCount(): number {
@@ -40,12 +43,21 @@ export class RoadMeshLayer {
     return n;
   }
 
-  private build(rt: RoadRuntime, chunk: RoadChunk): void {
-    let meshes = this.byRuntime.get(rt);
-    if (!meshes) { meshes = new Map(); this.byRuntime.set(rt, meshes); }
-    const { geometry, materials } = buildChunkGeometry(rt, chunk, this.extrude);
-    const mats = materials.map((n) => this.materials.get(n));
-    const old = meshes.get(chunk.index);
+  private ownerId(o: Owner): string {
+    return 'def' in o ? `r:${o.def.id}` : `j:${o.id}`;
+  }
+
+  private retire(id: string, prev: Owner): void {
+    const list = this.retired.get(id) ?? [];
+    list.push(prev);
+    this.retired.set(id, list);
+  }
+
+  private put(owner: Owner, index: number, geometry: THREE.BufferGeometry, names: string[]): void {
+    let meshes = this.byRuntime.get(owner);
+    if (!meshes) { meshes = new Map(); this.byRuntime.set(owner, meshes); }
+    const mats = names.map((n) => this.materials.get(n));
+    const old = meshes.get(index);
     if (old) {
       old.geometry.dispose();
       old.geometry = geometry;
@@ -54,34 +66,45 @@ export class RoadMeshLayer {
       const mesh = new THREE.Mesh(geometry, mats);
       mesh.receiveShadow = true;
       mesh.frustumCulled = true;
-      mesh.name = `${rt.def.id}#${chunk.index}`;
+      mesh.name = `${this.ownerId(owner)}#${index}`;
       this.group.add(mesh);
-      meshes.set(chunk.index, mesh);
+      meshes.set(index, mesh);
     }
-    // newest version complete → drop the versions it replaced
-    if (rt.pendingCount === 0) this.dropRetired(rt.def.id);
   }
 
-  private dropRetired(roadId: string): void {
-    for (const prev of this.retired.get(roadId) ?? []) this.disposeRuntime(prev);
-    this.retired.delete(roadId);
+  private buildChunk(rt: RoadRuntime, chunk: RoadChunk): void {
+    const { geometry, materials } = buildChunkGeometry(rt, chunk, this.extrude);
+    this.put(rt, chunk.index, geometry, materials);
+    if (rt.pendingCount === 0) this.dropRetired(`r:${rt.def.id}`);
   }
 
-  private disposeRuntime(rt: RoadRuntime): void {
-    const meshes = this.byRuntime.get(rt);
+  private buildJunction(j: JunctionRuntime): void {
+    if (!j.patch) return;
+    const { geometry, materials } = buildJunctionGeometry(j.patch);
+    this.put(j, 0, geometry, materials);
+    this.dropRetired(`j:${j.id}`);
+  }
+
+  private dropRetired(id: string): void {
+    for (const prev of this.retired.get(id) ?? []) this.disposeOwner(prev);
+    this.retired.delete(id);
+  }
+
+  private disposeOwner(o: Owner): void {
+    const meshes = this.byRuntime.get(o);
     if (!meshes) return;
     for (const m of meshes.values()) { m.geometry.dispose(); this.group.remove(m); }
-    this.byRuntime.delete(rt);
+    this.byRuntime.delete(o);
   }
 
-  private removeRoad(roadId: string): void {
-    this.dropRetired(roadId);
-    for (const rt of [...this.byRuntime.keys()]) if (rt.def.id === roadId) this.disposeRuntime(rt);
+  private removeOwner(id: string): void {
+    this.dropRetired(id);
+    for (const o of [...this.byRuntime.keys()]) if (this.ownerId(o) === id) this.disposeOwner(o);
   }
 
   dispose(): void {
     for (const u of this.unsub) u();
-    for (const rt of [...this.byRuntime.keys()]) this.disposeRuntime(rt);
+    for (const o of [...this.byRuntime.keys()]) this.disposeOwner(o);
     this.retired.clear();
     this.group.clear();
   }

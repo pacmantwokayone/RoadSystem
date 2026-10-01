@@ -229,6 +229,45 @@ Gelesen, nicht verändert. Folgendes ist **verifiziert** und fließt ins Design 
 
 ---
 
+## 2e. Umsetzungsnotizen Phase 4 (Netzwerk + Kreuzungen)
+
+**Datenmodell.** Straßen bleiben Punktlisten; eine Kreuzung ist ein `NodeDef` (Position, Kurvenradius), auf den
+Straßenenden per `startNode`/`endNode` zeigen. Ein T entsteht, indem die durchgehende Straße am Knoten **geteilt**
+wird. Ein Knoten braucht ≥ 2 Straßenenden; die Netz-Normalisierung (`normalizeNetwork`) entfernt hängende
+Referenzen und Knoten mit < 2 Armen und rastet verbundene Enden exakt auf den Knoten ein. Dokument-Version bleibt
+abwärtskompatibel (`nodes` ist optional).
+
+**Geometrie** (`network/junction.ts`, reine 2D-Mathematik, zufällig getestet an 6000 Kreuzungen):
+- Arme nach Winkel sortiert; zwischen zwei Nachbarn liegt ein **Keil** (Fillet, Außenecke, „gerade weiter“ oder
+  Kappe). Setback je Arm aus Breiten und Winkel: `s = (wA·cosγ + wB)/sinγ + Tangentenlänge`.
+- Das Randpolygon wird aus den **tatsächlichen** Enden der (am Knoten gekürzten) Straßen gebaut, nicht aus
+  idealisierten Geraden – dadurch passt der Patch auch bei gekrümmten Armen **ohne Spalt** an (Test: Patch-Ecken
+  stimmen auf 5 cm mit den Endringen überein, auch in der Höhe).
+- **Rückfälle** für Extremgeometrie (z. B. 1 m und 5 m Halbbreite fast gerade zusammen): erst alle Ecken gerade
+  verbinden, dann konvexe Hülle – das Polygon ist damit immer einfach (< 1 % der Zufallsfälle brauchen es).
+- Ab ±12° zur Geraden gilt ein Keil als „gerade weiter“ → **Profilübergang** (Verjüngung über `3·|ΔBreite|`).
+- Höhen: Randhöhen aus den Straßenoberflächen, Ringe zur Mitte hin geblendet, nie unter Terrain; Wände bis zum
+  Terrain wie bei den Straßen. Straßen bekommen **Abschlusskappen**, der Körper ist überall geschlossen.
+
+**Laufzeit.** `RoadSystem.setNetwork` berechnet Layouts → Trims → baut nur Straßen/Kreuzungen neu, deren Eingaben
+sich (nach Objektidentität) geändert haben. 3120 Straßen / 1600 Knoten: 0,8 s erster Aufbau, danach 40–60 ms je
+Änderung. Der Mesh-Layer hält Vorgängerversionen sichtbar, bis die neue komplett steht (auch für Kreuzungen).
+
+**Editor.** `RoadModel` arbeitet jetzt mit Snapshots → *Teilen + Knoten + Verbinden* ist **ein** Undo-Schritt.
+Zeichnen: Start/Ende nahe einer Straße/einem Ende/einem Knoten dockt an (Straße wird geteilt). Freies Ende auf
+ein Ziel ziehen verbindet. Knoten-Marker ziehen verschiebt alle Arme. Inspector: Radius, Armliste, auflösen.
+
+**Bekannte Grenzen (bewusst, siehe Roadmap):**
+- Die Höhen der Arme werden unabhängig vom Terrain ausgerichtet; der Patch vermittelt dazwischen. Bei sehr
+  unruhigem Gelände kann das einen leichten Höhenversatz erzeugen. Verbesserung: Knotenhöhe als gemeinsamer
+  Anker (mit Phase 10 / Terrain-Modifier).
+- Der Patch deckt nur die **Fahrbahn** (Core-Breite); Bankett/Graben/Gehweg enden an den Armenden (Gehweg-Ecken,
+  Bordstein und Markierungen kommen mit Phase 5).
+- Patch-Material = Hauptfahrstreifen der breitesten Straße; Unterseite des Patches fehlt (nur von unten sichtbar).
+- Kreisel, Auf-/Abfahrten, Unterführungen: Phase 11.
+
+---
+
 ## 3. Kernkonzepte im Detail
 
 ### 3.1 Spline & Terrain-Anpassung
@@ -453,7 +492,7 @@ Jede Phase endet mit etwas **Sichtbarem und Lauffähigem** in der Demo (gegen da
 | 1 | **Core** ✅ (ohne Kreuzungs-Prototyp) | `TerrainSource`-Adapter, `WorldAdapter`, Catmull-Rom + Bogenlänge, Frames, Krümmung, Höhenmodi (`fixed`/`drape`/`graded`), `resync()`; Tests. Parallel: Kreuzungs-Prototyp |
 | 2 | **Profil + Extrusion (MVP)** ✅ | Straße per Klick aufs Terrain zeichnen (`drape` auf gesettelte Höhe, `y` als Fallback); Presets Flurstraße & Hauptstraße; Dicke verdeckt Terrain-Lücken; Nachladen des Terrains lässt nichts schweben |
 | 3 | **Persistenz + Mini-Editor** ✅ | Datenmodell + `RoadStore` (Memory/HTTP), Punkte verschieben, Profil-Code live editieren, Params-UI, 2D-Querschnitt, Undo/Redo, Revisionen |
-| 4 | **Netzwerk + Kreuzungen** | Graph, Y/T/X-Kreuzungen, Profilübergänge, Sackgasse |
+| 4 | **Netzwerk + Kreuzungen** ✅ | Graph, Y/T/X-Kreuzungen, Profilübergänge, Sackgasse |
 | 5 | **Oberflächen & Markierungen** | Material-Registry + prozedurale Materialien (austauschbar), Verschleiß-Layer, Markierungen, alle Basis-Presets (Wanderweg → Autobahn) |
 | 6 | **Props** | Scatter-System, Leitplanken (+Auto-Regel), Laternen, Schilder (SSV), Vortrittsschilder automatisch |
 | 7 | **Ampeln** | Signalgruppen, automatischer Phasenplan, Fußgängerstreifen, Haltelinien |

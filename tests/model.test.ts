@@ -110,8 +110,10 @@ describe('RoadModel', () => {
     m.addRoad(road('a'));
     m.edit('a', 'x', (d) => { d.name = 'b'; });
     m.removeRoad('a');
-    const types = events.filter((e) => e.type !== 'history').map((e) => e.type);
+    const types = events.filter((e) => e.type !== 'history' && e.type !== 'changed').map((e) => e.type);
     expect(types).toEqual(['reset', 'road', 'road', 'remove']);
+    // exactly one 'changed' per change (load + add + edit + remove) — the editor syncs the RoadSystem on it
+    expect(events.filter((e) => e.type === 'changed').length).toBe(4);
   });
 
   it('toDocument returns deep copies', () => {

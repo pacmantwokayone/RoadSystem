@@ -57,14 +57,16 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
 
   // ================= roads tab =================
   const listEl = h('div', { class: 'rse-list' });
+  const nodeListEl = h('div', { class: 'rse-list' });
   const inspector = h('div');
   const activeProfileSel = h('select', { on: { change: () => { editor.state.activeProfile = activeProfileSel.value; } } });
   roadsBody.append(
     h('div', { class: 'rse-row two' }, h('span', {}, 'Neue Straßen'), activeProfileSel),
-    h('div', { class: 'rse-h' }, 'Straßen'), listEl, inspector,
+    h('div', { class: 'rse-h' }, 'Straßen'), listEl, nodeListEl, inspector,
   );
 
   let listKey = '';
+  let nodeListKey = '';
   let inspKey = '';
   let controls: Control[] = [];
 
@@ -132,6 +134,17 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
     activeProfileSel.value = editor.state.activeProfile;
 
     const sel = editor.state.roadId;
+    const nsel = editor.state.nodeId;
+    const nodes = editor.model.nodeList;
+    const nodeKey = nodes.map((n) => `${n.id}:${n.radius ?? ''}:${editor.nodeArms(n.id).length}`).join('|') + `#${nsel}`;
+    if (nodeKey !== nodeListKey) {
+      nodeListKey = nodeKey;
+      nodeListEl.replaceChildren(
+        ...(nodes.length ? [h('div', { class: 'rse-h', style: 'margin:2px 0' }, 'Kreuzungen')] : []),
+        ...nodes.map((n, i) => h('div', { class: `rse-item${n.id === nsel ? ' sel' : ''}`, on: { click: () => editor.selectNode(n.id) } },
+          h('span', {}, `Kreuzung ${i + 1}`), h('small', {}, `${editor.nodeArms(n.id).length} Arme · R ${(n.radius ?? 6).toFixed(1)} m`))),
+      );
+    }
     const nk = editor.model.list.map((r) => `${r.id}:${r.name}:${r.profile}`).join('|') + `#${sel}`;
     if (nk !== listKey) {
       listKey = nk;
@@ -141,12 +154,24 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
     }
 
     const road = editor.selectedRoad;
-    const ik = road ? `${road.id}|${road.profile}|${editor.state.pointIndex}|${road.points.length}|${library.names().join(',')}` : 'none';
+    const node = editor.selectedNode;
+    const ik = node
+      ? `node|${node.id}|${editor.nodeArms(node.id).map((a) => a.roadId + a.end).join(',')}`
+      : road ? `${road.id}|${road.profile}|${editor.state.pointIndex}|${road.points.length}|${library.names().join(',')}` : 'none';
     if (ik !== inspKey) {
       inspKey = ik;
       controls = [];
       inspector.replaceChildren();
-      if (!road) {
+      if (node) {
+        inspector.append(
+          h('div', { class: 'rse-h' }, 'Kreuzung'),
+          numberRow('Kurvenradius (m)', () => editor.selectedNode?.radius ?? 6, (v) => editor.setNodeRadius(v), { min: 1, max: 25, step: 0.5, slider: true, fmt: (v) => v.toFixed(1) }),
+          h('div', { class: 'rse-h' }, 'Arme'),
+          ...editor.nodeArms(node.id).map((a) => h('div', { class: 'rse-item', on: { click: () => editor.selectRoad(a.roadId) } }, h('span', {}, a.name), h('small', {}, a.end === 'start' ? 'Anfang' : 'Ende'))),
+          h('div', { class: 'rse-hint', style: 'margin-top:6px' }, 'Marker ziehen verschiebt die Kreuzung samt aller Straßen. Ein freies Straßenende auf die Marker, ein anderes Ende oder eine andere Straße ziehen verbindet sie.'),
+          h('div', { class: 'rse-actions' }, h('button', { class: 'danger', on: { click: () => editor.dissolveSelectedNode() } }, 'Kreuzung auflösen (Entf)')),
+        );
+      } else if (!road) {
         inspector.append(h('div', { class: 'rse-hint' }, 'Straße anklicken, um sie zu bearbeiten. Punkte lassen sich ziehen; Umschalt+Klick (oder Doppelklick) auf die Straße fügt einen Punkt ein.'));
       } else {
         const nameInput = h('input', { type: 'text', value: road.name, on: { input: () => editor.rename(nameInput.value), change: () => editor.model.breakCoalesce() } }) as HTMLInputElement;

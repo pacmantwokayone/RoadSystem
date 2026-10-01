@@ -75,7 +75,7 @@ export class HttpRoadStore implements RoadStore {
   }
 
   saveRoads(location: string, doc: RoadsDocument, baseRevision?: number): Promise<SaveResult> {
-    return this.post(`${this.base}/roads-save.php`, { location, roads: doc.roads, baseRevision }, baseRevision);
+    return this.post(`${this.base}/roads-save.php`, { location, roads: doc.roads, nodes: doc.nodes ?? [], baseRevision }, baseRevision);
   }
 
   async loadLibrary(): Promise<LibraryDocument | null> {

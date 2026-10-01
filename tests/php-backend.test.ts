@@ -73,6 +73,23 @@ describe.skipIf(!phpOk)('HttpRoadStore ↔ reference PHP backend', () => {
     expect((await store.loadRoads('eiger'))!.roads[0].id).toBe('b');
   });
 
+  it('junction nodes round-trip with the roads', async () => {
+    const withNode: RoadsDocument = {
+      version: 1,
+      roads: [
+        { id: 'a', name: 'a', profile: 'hauptstrasse', points: [{ x: 0, y: 1, z: 0 }, { x: 10, y: 1, z: 0 }], endNode: 'n' },
+        { id: 'b', name: 'b', profile: 'hauptstrasse', points: [{ x: 10, y: 1, z: 0 }, { x: 20, y: 1, z: 0 }], startNode: 'n' },
+      ],
+      nodes: [{ id: 'n', x: 10, y: 1, z: 0, radius: 8 }],
+    };
+    expect(await store.saveRoads('nodes', withNode)).toEqual({ ok: true, revision: 1 });
+    const back = await store.loadRoads('nodes');
+    expect(back!.nodes).toEqual([{ id: 'n', x: 10, y: 1, z: 0, radius: 8 }]);
+    expect(back!.roads[0].endNode).toBe('n');
+    const bad = (await fetch(`${rw.base}/roads-save.php`, { method: 'POST', body: JSON.stringify({ location: 'x', roads: [], nodes: [{ id: 'n', x: 'oops' }] }) })).status;
+    expect(bad).toBe(400);
+  });
+
   it('a stale base revision is a 409 conflict carrying the server revision; nothing is overwritten', async () => {
     const r = await store.saveRoads('eiger', doc('mine'), 1);
     expect(r).toEqual({ ok: false, conflict: true, serverRevision: 2 });

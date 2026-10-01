@@ -53,9 +53,20 @@ const mk = (id: string, name: string, profile: string, pts: Array<[number, numbe
   id, name, profile, points: pts.map(([x, , z]) => ({ x, y: terrain.heightFn(x, z), z })),
 });
 const sampleRoads: RoadDef[] = [
-  mk('a', 'Landstrasse', 'hauptstrasse', [[2700, 0, 3100], [2900, 0, 3150], [3100, 0, 3050], [3300, 0, 3000], [3500, 0, 3100], [3700, 0, 3250], [3900, 0, 3200]]),
+  mk('a', 'Landstrasse', 'hauptstrasse', [[2700, 0, 3100], [2900, 0, 3150], [3100, 0, 3050], [3300, 0, 3000]]),
+  mk('a2', 'Landstrasse (2)', 'hauptstrasse', [[3300, 0, 3000], [3500, 0, 3100]]),
+  mk('a3', 'Landstrasse (3)', 'hauptstrasse', [[3500, 0, 3100], [3700, 0, 3250], [3900, 0, 3200]]),
   mk('b', 'Feldweg', 'flurstrasse', [[3300, 0, 3000], [3330, 0, 2900], [3250, 0, 2820], [3340, 0, 2740], [3260, 0, 2660], [3350, 0, 2580], [3300, 0, 2450]]),
   mk('c', 'Wanderweg', 'wanderweg', [[3500, 0, 3100], [3560, 0, 3010], [3640, 0, 2990], [3700, 0, 2900], [3790, 0, 2880]]),
+].map((r): RoadDef => {
+  const link: Record<string, Partial<RoadDef>> = {
+    a: { endNode: 'N1' }, a2: { startNode: 'N1', endNode: 'N2' }, a3: { startNode: 'N2' }, b: { startNode: 'N1' }, c: { startNode: 'N2' },
+  };
+  return { ...r, ...link[r.id] };
+});
+const sampleNodes = [
+  { id: 'N1', x: 3300, y: terrain.heightFn(3300, 3000), z: 3000 },
+  { id: 'N2', x: 3500, y: terrain.heightFn(3500, 3100), z: 3100 },
 ];
 
 // ---- editor host ----
@@ -76,10 +87,37 @@ mountEditorPanels(editor, document.body, { library, materials });
 void (async () => {
   await editor.load();
   if (!editor.model.list.length && !(await store.loadRoads(LOCATION))) {
-    editor.model.load({ version: 1, roads: sampleRoads });
+    editor.model.load({ version: 1, roads: sampleRoads, nodes: sampleNodes });
     editor.setStatus('Beispielstraßen geladen – noch nicht gespeichert', 'info');
   }
 })();
+
+// ?net=1 → a hand-made test network (T, X, bend, width change) to look at junction geometry
+if (qp.get('net')) {
+  const y = (x: number, z: number): number => terrain.heightFn(x, z);
+  const P = (id: string, profile: string, pts: Array<[number, number]>, extra: object = {}): RoadDef =>
+    ({ id, name: id, profile, points: pts.map(([x, z]) => ({ x, y: y(x, z), z })), ...extra });
+  const nodes = [
+    { id: 'T', x: 3300, y: y(3300, 3000), z: 3000 },
+    { id: 'X', x: 3000, y: y(3000, 3300), z: 3300, radius: 8 },
+    { id: 'B', x: 3600, y: y(3600, 3300), z: 3300 },
+    { id: 'W', x: 3300, y: y(3300, 3500), z: 3500 },
+  ];
+  const roads: RoadDef[] = [
+    P('t-w', 'hauptstrasse', [[3000, 3000], [3150, 3020], [3300, 3000]], { endNode: 'T' }),
+    P('t-e', 'hauptstrasse', [[3300, 3000], [3450, 2980], [3600, 3000]], { startNode: 'T' }),
+    P('t-s', 'flurstrasse', [[3300, 2750], [3290, 2880], [3300, 3000]], { endNode: 'T' }),
+    P('x-w', 'hauptstrasse', [[2800, 3300], [2900, 3290], [3000, 3300]], { endNode: 'X' }),
+    P('x-e', 'hauptstrasse', [[3000, 3300], [3100, 3310], [3200, 3300]], { startNode: 'X' }),
+    P('x-n', 'hauptstrasse', [[3000, 3300], [3010, 3400], [3000, 3500]], { startNode: 'X' }),
+    P('x-s', 'flurstrasse', [[3000, 3100], [3010, 3200], [3000, 3300]], { endNode: 'X' }),
+    P('b-a', 'hauptstrasse', [[3400, 3300], [3500, 3310], [3600, 3300]], { endNode: 'B' }),
+    P('b-b', 'hauptstrasse', [[3600, 3300], [3610, 3400], [3600, 3500]], { startNode: 'B' }),
+    P('w-a', 'flurstrasse', [[3250, 3500], [3280, 3500], [3300, 3500]], { endNode: 'W' }),
+    P('w-b', 'hauptstrasse', [[3300, 3500], [3400, 3495], [3500, 3500]], { startNode: 'W' }),
+  ];
+  setTimeout(() => editor.model.load({ version: 1, roads, nodes }), 800);
+}
 
 // ---- camera ----
 const cam = qp.get('cam')?.split(',').map(Number);
@@ -115,15 +153,15 @@ renderer.setAnimationLoop(() => {
     const st = system.stats();
     const ts = terrain.loadStats();
     hud.textContent =
-      `RoadSystem – Phase 3 (Editor)\n` +
-      `Straßen: ${editor.model.list.length}   Chunks: ${st.ready}/${st.chunks}   Meshes: ${meshLayer.meshCount}\n` +
+      `RoadSystem – Phase 4 (Kreuzungen)\n` +
+      `Straßen: ${editor.model.list.length}   Kreuzungen: ${system.junctionStats().ready}/${system.junctionStats().total}   Chunks: ${st.ready}/${st.chunks}\n` +
       `Terrain-Kacheln: ${ts.ready} geladen / ${ts.known} bekannt`;
   }
 });
 
 (window as unknown as Record<string, unknown>).__demo = {
   editor, library,
-  stats: () => ({ roads: system.stats(), tiles: terrain.loadStats(), meshes: meshLayer.meshCount, count: editor.model.list.length, dirty: editor.isDirty }),
+  stats: () => ({ roads: system.stats(), tiles: terrain.loadStats(), meshes: meshLayer.meshCount, count: editor.model.list.length, nodes: editor.model.nodeList.length, junctions: system.junctionStats(), dirty: editor.isDirty }),
   /** screen position (px) of a sim-space ground point, for scripted clicks */
   project(x: number, z: number): { x: number; y: number } {
     const h = terrain.heightAt(x, z) ?? 0;
