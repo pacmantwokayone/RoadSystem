@@ -3,6 +3,8 @@
 // + = right; y relative to the design height) with one segment record per
 // consecutive point pair, plus a closed body underneath (thickness, walls).
 
+import type { PropRule } from '../props/rules';
+
 export interface ProfilePoint {
   x: number;
   y: number;
@@ -60,6 +62,10 @@ export interface ProfileData {
   bodyMaterial: string;
   /** painted lines (centre line, edge lines, …) */
   markings: MarkingDef[];
+  /** things placed along the road (lamps, signs, guardrails …) */
+  props: PropRule[];
+  /** importance of the road in a junction (higher = has right of way); roads of equal rank give way to the right */
+  rank: number;
   /** terrain-following smoothing radius for this profile, metres */
   smoothRadiusM?: number;
   /** half width of the carriageway footprint (segments with core = true) */

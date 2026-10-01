@@ -297,6 +297,51 @@ Speicherungen enden sauber in 409 statt in einem Fehler.
 
 ---
 
+## 2g. Umsetzungsnotizen Phase 6 (Props)
+
+**Regeln im Profil-Code.** `prof.scatter(asset, {side, offset, spacing | at, face, jitterAlong, jitterLateral, scale, stagger, modes, when})`,
+`prof.lamps(...)`, `prof.guardrail(side, {variant, offset, minDrop, when, …})`, `prof.rank(n)`. `offset` = Meter nach aussen ab der
+Fahrbahnkante (`core`), negativ = einwärts (z. B. Laterne auf dem Trottoir). Regeln sind Daten + optionales `when(ctx)`
+(`ctx`: `s`, `side`, `curvature`, `outer`, `drop`, `mode`, `random()`); ein werfendes `when` lässt nur das Prop weg.
+
+**Platzierung (`props/place.ts`).** Pro bereitem Chunk, aus der **absoluten Bogenlänge** (halboffenes Intervall pro Chunk ⇒ nie doppelt/
+fehlend an Chunk-Grenzen), Zufall deterministisch (Strassen-Seed + Regel + Index). Position über dieselben `ringSection`s wie Körper und
+Markierungen ⇒ Props stehen exakt auf der Oberfläche; ausserhalb des Profils auf dem Terrain. Nahe Knoten (6 m) keine Props.
+
+**Leitplanken.** Auto-Regel: Rail dort, wo das Terrain innerhalb 6 m neben der Schiene ≥ `minDrop` (1.8 m) abfällt, oder ≥ `minDropBend`
+(0.9 m) auf der Aussenseite einer Kurve mit R < `bendRadius`; Brücken (`bridge`) sind standardmässig eingeschlossen. Läufe: Lücken < 14 m
+überbrückt, Läufe < 8 m verworfen, 8 m Vor-/Nachlauf. Varianten `steel` (W-Profil, abgesenktes Endstück), `concrete` (New-Jersey, Endstück
+läuft aus), `wood`, `cable`. Schiene = extrudiertes Querprofil mit analytischen Normalen (naht-konsistent), Pfosten = normale Placements.
+
+**Assets & Materialien.** `PropAssets` (Name → Geometrieteile + Materialname; prozedural, low-poly; `register(name, {build})` ersetzt jedes
+Asset, `partsFromObject(gltf.scene, materials)` macht aus einem Modell Teile), `PropMaterials` (Name → Material, `set` ersetzt). Eingebaut:
+Pfosten, Laterne (gross/klein), Leitpfosten, Poller, Kilometerstein, Bank, Pappel, Linde.
+
+**Schilder (SSV-Stil).** `sign:<id>[:<text>]`; 22 Entwürfe (Höchstgeschwindigkeit 20–120, 9 Stufen, Stop, Kein Vortritt, Hauptstrasse, Einfahrt verboten,
+Fussgängerstreifen, Autobahn, Kurve links/rechts, Gefahr, Wegweiser blau/grün/Wanderweg, Ortstafel) per Canvas gezeichnet (Farben/Layout
+nach Norm, Proportionen/Piktogramme vereinfacht; keine SSV-Artikelnummern, weil ungeprüft). Ohne Canvas (headless) Fallback auf Einheitsfarbe.
+
+**Vortritt automatisch.** `profile.rank` (Presets: Wanderweg 0 … Autobahn 8; Standard aus der Breite). Pro Kreuzung: gleiche Ränge ⇒ keine
+Schilder (Rechtsvortritt); sonst bekommen schwächere Arme „Kein Vortritt“ (bei Rangabstand ≥ `stopRankGap` „Stop“), stärkere „Hauptstrasse“.
+Wege (Rang < 2) zählen nicht. Schild steht rechts am Arm (aus Sicht des anfahrenden Verkehrs), 3.5 m vor dem Patch, zum Verkehr gedreht.
+
+**Layer.** `PropLayer` spiegelt `RoadMeshLayer` (Ersetzen behält die alte Version sichtbar bis die neue komplett ist, Entfernen räumt auf);
+**ein zusammengeführtes Mesh pro Chunk** (je Material eine Gruppe), `update(camera)` blendet Chunks jenseits `drawDistance` aus.
+Messung (headless, 40 Strassen / 1280 Chunks / 24 000 Props): +0.75 ms pro Chunk.
+
+**Bekannte Grenzen (bewusst):**
+- Props sind pro Chunk **gebacken**, nicht instanziert – bei sehr dichten Props (Wälder) ist Instancing der nächste Schritt (Phase 15).
+- Leitplanken-Läufe werden **chunk-lokal** entschieden (Vor-/Nachlauf und Lückenüberbrückung wirken nicht über Chunk-Grenzen); ein Lauf, der
+  die Grenze erreicht, setzt sich im Nachbarchunk nahtlos fort, aber ein kurzer Vorlauf kann an der Grenze fehlen.
+- Leitplanken: einfache Endstücke (abgesenkt/auslaufend), kein Anprallelement, Pfosten kippen nicht mit dem Hang.
+- Kreuzungs-Patches haben keine Laternen/Leitplanken/Haltelinien/Fussgängerstreifen (Phase 7); der Vortritt hängt nur am Rang, nicht an einer
+  Knoteneigenschaft („Stop“ erzwingen, Lichtsignal): kommt mit Phase 7.
+- Laternen leuchten nur optisch (emissive Köpfe), keine Lichtquellen; Nacht/Lichtkegel in Phase 16.
+- Keine Kollision: `PropLayer.allPlacements()`/`railRuns()` liefern die Daten für die Gameplay-API (Phase 14).
+- Brücken-/Tunnelgeländer und Portale kommen mit Phase 8/9.
+
+---
+
 ## 3. Kernkonzepte im Detail
 
 ### 3.1 Spline & Terrain-Anpassung
@@ -523,7 +568,7 @@ Jede Phase endet mit etwas **Sichtbarem und Lauffähigem** in der Demo (gegen da
 | 3 | **Persistenz + Mini-Editor** ✅ | Datenmodell + `RoadStore` (Memory/HTTP), Punkte verschieben, Profil-Code live editieren, Params-UI, 2D-Querschnitt, Undo/Redo, Revisionen |
 | 4 | **Netzwerk + Kreuzungen** ✅ | Graph, Y/T/X-Kreuzungen, Profilübergänge, Sackgasse |
 | 5 | **Oberflächen & Markierungen** ✅ | Material-Registry + prozedurale Materialien (austauschbar), Verschleiß-Layer, Markierungen, alle Basis-Presets (Wanderweg → Autobahn) |
-| 6 | **Props** | Scatter-System, Leitplanken (+Auto-Regel), Laternen, Schilder (SSV), Vortrittsschilder automatisch |
+| 6 | **Props** ✅ | Scatter-System, Leitplanken (+Auto-Regel), Laternen, Schilder (SSV), Vortrittsschilder automatisch |
 | 7 | **Ampeln** | Signalgruppen, automatischer Phasenplan, Fußgängerstreifen, Haltelinien |
 | 8 | **Brücken** | Balken/Bogen/Viadukt, Pfeiler bis Terrain, Widerlager, Geländer, Flusskreuzungs-Vorschlag |
 | 9 | **Tunnel** | Röhre, Portal-Fassade, Portal-Graben (Carve), Überdeckungs-Validierung, Beleuchtung, Galerien |

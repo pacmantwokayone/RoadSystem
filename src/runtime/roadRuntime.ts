@@ -134,6 +134,13 @@ export class RoadRuntime {
     return Number.isNaN(y) ? this.def.points[k].y : y;
   }
 
+  /** Terrain height at a THREE-space position, or null while that spot hasn't settled (props, guardrail rules). */
+  groundAtThree(x: number, zThree: number): number | null {
+    const z = flipZ(zThree);
+    if (!this.terrain.isSettledAt(x, z)) return null;
+    return this.terrain.heightAt(x, z);
+  }
+
   /** Sample index at a road end (after trimming). */
   endIndex(end: End): number {
     return end === 'start' ? 0 : this.samples.length - 1;

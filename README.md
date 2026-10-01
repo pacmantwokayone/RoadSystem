@@ -5,7 +5,7 @@ Eigenständiges Modul – ändert keine Spieldateien. Plan und Architektur: [`do
 
 ## Stand
 
-Phase 0–5 fertig (Setup, Core, Profile + Extrusion, Persistenz + Editor, Netzwerk + Kreuzungen, Oberflächen + Markierungen):
+Phase 0–6 fertig (Setup, Core, Profile + Extrusion, Persistenz + Editor, Netzwerk + Kreuzungen, Oberflächen + Markierungen, Props):
 
 - `src/core` – Weltkonvention (`simToThree`), zentripetaler Catmull-Rom (`PathCurve`), Frames/Banking,
   krümmungsadaptives Sampling, Höhen-Alignment (`drape` mit FIR-Glättung, naht-konsistent)
@@ -17,6 +17,8 @@ Phase 0–5 fertig (Setup, Core, Profile + Extrusion, Persistenz + Editor, Netzw
 - `src/mesh` – `buildChunkGeometry` (Extrusion mit Körper, analytische Normalen, UVs in Metern), `RoadMeshLayer`
 - `src/surface` – `MaterialRegistry` (Material-*Namen* → prozedurale Shader-Materialien mit Verschleiß + Wetter, später durch Texturen ersetzbar),
   `MaterialLibrary` (Materialien als Code, Hot-Reload; Material-Tab im Editor)
+- `src/props` – Prop-Regeln im Profil (`scatter`, `lamps`, `guardrail`, `rank`), Platzierung pro Chunk, Leitplanken (Auto-Regel, 4 Varianten),
+  Asset-/Material-Registry (ersetzbar), SSV-Schilder (Canvas), Vortrittsschilder aus der Kreuzungstopologie, `PropLayer`
 - `src/network` – `junction.ts` (Kreuzungsgeometrie: Setbacks, Ecken-Rundung, Randpolygon, Rückfälle), `graph.ts` (Netz normalisieren),
   `RoadSystem.setNetwork` (Diff-Aufbau), `JunctionRuntime` + `junctionMesh` (Patch aus den echten Armenden)
 - `src/store` – `RoadStore`-Vertrag + `MemoryStore` / `StorageStore` / `HttpRoadStore` (Revisionen, Konflikte)
@@ -31,6 +33,8 @@ Phase 0–5 fertig (Setup, Core, Profile + Extrusion, Persistenz + Editor, Netzw
 npm install
 npm run dev        # Demo + Editor (Wählen/Zeichnen, Profil-/Material-Code live, Speichern im Browser)
                    # Query: ?gallery=1&flat=1 (alle Presets), ?wet=0.8&snow=0.3&age=0.7 (Wetter/Alter)
+                   # Props: ?cliff=1 (Leitplanken am Abgrund), ?village=1 (Kreuzung mit Allee/Laternen/Vortritt),
+                   #        ?assets=1&flat=1 (alle Props + Schilder), ?props=0 (ausblenden)
 npm test           # Vitest
 npm run typecheck
 ```

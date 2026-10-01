@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
-  MockStreamTerrain, RoadSystem, RoadDebugLayer, RoadMeshLayer, ProfileLibrary, MaterialRegistry, MaterialLibrary,
+  MockStreamTerrain, RoadSystem, RoadDebugLayer, RoadMeshLayer, PropLayer, GeometryBatch, placementMatrix, SIGN_CATALOG, ProfileLibrary, MaterialRegistry, MaterialLibrary,
   StorageStore, MemoryStore, type RoadDef, type RoadStore,
 } from 'roadsystem';
 import { RoadEditor, mountEditorPanels } from 'roadsystem/editor';
@@ -28,7 +28,20 @@ const controls = new OrbitControls(camera, renderer.domElement);
 
 // Sim-space world, three-space meshes (z mirrored) — same as the game.
 // ?flat=1 → flat ground (clean look at profiles / markings)
-const terrain = new MockStreamTerrain({ buildMeshes: true, loadLatencyFrames: Number(qp.get('lat') ?? 25), ...(qp.get('flat') ? { heightFn: () => 800 } : {}) });
+// ?cliff=1 → flat ground with ravines beside rows of roads at sim z = 3000, 2800, 2600, 2400 (guardrail test scene)
+const RAVINE_START: Record<number, number> = { 3000: 8, 2800: 6, 2600: 14, 2400: 8 };
+const ravine = (x: number, z: number): number => {
+  if (x < 3100 || x > 3320 || z < 2300 || z > 3300) return 800;
+  const zc = 3000 - 200 * Math.round((3000 - z) / 200);
+  const m = z - zc; // distance past the row's road line
+  const a = RAVINE_START[zc] ?? 8;
+  const edge = (e0: number, e1: number, v: number): number => Math.min(1, Math.max(0, (v - e0) / (e1 - e0)));
+  return 800 - 28 * edge(a, a + 3, m) * (1 - edge(110, 114, m));
+};
+const terrain = new MockStreamTerrain({
+  buildMeshes: true, loadLatencyFrames: Number(qp.get('lat') ?? 25),
+  ...(qp.get('cliff') ? { heightFn: ravine } : qp.get('flat') ? { heightFn: () => 800 } : {}),
+});
 scene.add(terrain.group);
 
 const library = new ProfileLibrary();
@@ -38,6 +51,10 @@ materials.setWeather({ wet: Number(qp.get('wet') ?? 0), snow: Number(qp.get('sno
 const system = new RoadSystem(terrain, (d) => library.resolve(d.profile, d.params));
 const meshLayer = new RoadMeshLayer(system, materials);
 scene.add(meshLayer.group);
+// ?props=0 → no props (lamps, signs, guardrails …)
+const propLayer = new PropLayer(system, { drawDistance: Number(qp.get('propDist') ?? 900) });
+propLayer.group.visible = qp.get('props') !== '0';
+scene.add(propLayer.group);
 const debug = new RoadDebugLayer(system, terrain);
 debug.group.visible = false;
 scene.add(debug.group);
@@ -122,6 +139,43 @@ if (qp.get('net')) {
   setTimeout(() => editor.model.load({ version: 1, roads, nodes }), 800);
 }
 
+// ?village=1 → crossing: Kantonsstrasse with avenue (priority), Dorfstrasse + Quartierstrasse (give way), lamps and signs
+if (qp.get('village')) {
+  const pts = (l: Array<[number, number]>) => l.map(([x, z]) => ({ x, y: 800, z }));
+  const roads: RoadDef[] = [
+    { id: 'k1', name: 'Kantonsstrasse', profile: 'kantonsstrasse', params: { avenue: true }, points: pts([[2900, 3000], [3100, 3000], [3300, 3000]]), endNode: 'X' },
+    { id: 'k2', name: 'Kantonsstrasse (2)', profile: 'kantonsstrasse', params: { avenue: true }, points: pts([[3300, 3000], [3500, 3000], [3700, 3000]]), startNode: 'X' },
+    { id: 'd', name: 'Dorfstrasse', profile: 'dorfstrasse', points: pts([[3300, 2750], [3300, 2880], [3300, 3000]]), endNode: 'X' },
+    { id: 'q', name: 'Quartierstrasse', profile: 'quartierstrasse', points: pts([[3300, 3000], [3300, 3120], [3300, 3250]]), startNode: 'X' },
+  ];
+  setTimeout(() => editor.model.load({ version: 1, roads, nodes: [{ id: 'X', x: 3300, y: 800, z: 3000 }] }), 800);
+}
+
+// ?assets=1 → every prop asset and sign design in a row (use with ?flat=1; look at sim (3000, 3000))
+if (qp.get('assets')) {
+  const batch = new GeometryBatch();
+  const names = [...propLayer.assets.names().filter((n) => !n.startsWith('post_')), ...Object.keys(SIGN_CATALOG).map((id) => `sign:${id}${SIGN_CATALOG[id].labelled ? ':Thun|14 km' : ''}`)];
+  names.forEach((name, i) => {
+    const p = { asset: name, pos: new THREE.Vector3(3000 + (i % 12) * 3.2, 800, -(3000 + Math.floor(i / 12) * 6)), yaw: Math.PI, scale: 1, rule: -1, s: 0, side: 'right' as const };
+    for (const part of propLayer.assets.parts(name)) batch.addGeometry(part.material, part.geometry, placementMatrix(p));
+  });
+  const built = batch.build();
+  if (built) {
+    const m = new THREE.Mesh(built.geometry, built.materials.map((n) => propLayer.materials.get(n)));
+    scene.add(m);
+  }
+}
+
+// ?cliff=1 → four roads, each with a ravine on one side
+if (qp.get('cliff')) {
+  const rows: Array<[string, number]> = [['hauptstrasse', 3000], ['alpstrasse', 2800], ['autobahn', 2600], ['nebenstrasse', 2400]];
+  const roads: RoadDef[] = rows.map(([profile, z]) => ({
+    id: `c-${profile}`, name: profile, profile,
+    points: [3000, 3150, 3300, 3450, 3600].map((x) => ({ x, y: 800, z })),
+  }));
+  setTimeout(() => editor.model.load({ version: 1, roads }), 800);
+}
+
 // ?gallery=1 → one straight piece of road per profile, side by side (use with ?flat=1)
 if (qp.get('gallery')) {
   const names = library.names();
@@ -157,6 +211,7 @@ addEventListener('resize', () => {
 let frame = 0;
 renderer.setAnimationLoop(() => {
   controls.update();
+  propLayer.update(camera);
   // the "player" is the orbit target; the terrain streams around it (sim z = -three z)
   terrain.update(controls.target.x, -controls.target.z);
   editor.update(); // resyncs the road system with an editing-sized budget
@@ -166,15 +221,15 @@ renderer.setAnimationLoop(() => {
     const st = system.stats();
     const ts = terrain.loadStats();
     hud.textContent =
-      `RoadSystem – Phase 5 (Oberflächen & Markierungen)\n` +
+      `RoadSystem – Phase 6 (Props: Leitplanken, Laternen, Schilder)\n` +
       `Straßen: ${editor.model.list.length}   Kreuzungen: ${system.junctionStats().ready}/${system.junctionStats().total}   Chunks: ${st.ready}/${st.chunks}\n` +
       `Terrain-Kacheln: ${ts.ready} geladen / ${ts.known} bekannt`;
   }
 });
 
 (window as unknown as Record<string, unknown>).__demo = {
-  editor, library, materials, materialLibrary,
-  stats: () => ({ roads: system.stats(), tiles: terrain.loadStats(), meshes: meshLayer.meshCount, count: editor.model.list.length, nodes: editor.model.nodeList.length, junctions: system.junctionStats(), dirty: editor.isDirty }),
+  editor, library, materials, materialLibrary, propLayer,
+  stats: () => ({ roads: system.stats(), tiles: terrain.loadStats(), meshes: meshLayer.meshCount, propMeshes: propLayer.meshCount, props: propLayer.allPlacements().length, count: editor.model.list.length, nodes: editor.model.nodeList.length, junctions: system.junctionStats(), dirty: editor.isDirty }),
   /** screen position (px) of a sim-space ground point, for scripted clicks */
   project(x: number, z: number): { x: number; y: number } {
     const h = terrain.heightAt(x, z) ?? 0;

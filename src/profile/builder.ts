@@ -9,6 +9,7 @@
 //       .surface(0.8, 'asphalt_worn', { kind: 'shoulder', slope: -0.04 })
 //       .ditch(1.4, 0.35, 'grass'))
 
+import { makeGuardrail, makeScatter, type GuardrailOpts, type PropRule, type PropSide, type ScatterOpts } from '../props/rules';
 import type { MarkingDef, ProfileData, ProfilePoint, ProfileSegment, VaryContext, VaryResult } from './types';
 
 export interface SurfaceOpts {
@@ -105,6 +106,8 @@ export class ProfileBuilder {
   private _left: Element[] = [];
   private _vary: ((ctx: VaryContext) => VaryResult) | undefined;
   private _marks: MarkingDef[] = [];
+  private _props: PropRule[] = [];
+  private _rank: number | undefined;
 
   constructor(readonly name: string) {}
 
@@ -151,6 +154,30 @@ export class ProfileBuilder {
   /** Centre line (default: white dashed). */
   markCenter(opts: MarkOpts = {}): this {
     this._marks.push(markingOf(0, { style: 'dashed', ...opts }));
+    return this;
+  }
+
+  /** Props along the road: `asset` is a registry name or `sign:<id>[:<text>]`. */
+  scatter(asset: string, opts: ScatterOpts = {}): this {
+    this._props.push(makeScatter(asset, opts));
+    return this;
+  }
+
+  /** Street lamps (arm over the road). */
+  lamps(opts: ScatterOpts & { asset?: string } = {}): this {
+    const { asset = 'lamp', ...rest } = opts;
+    return this.scatter(asset, { spacing: 35, offset: 0.9, face: 'road', jitterAlong: 0.8, ...rest });
+  }
+
+  /** Guardrail; by default only where the terrain drops away or on the outside of tight bends. */
+  guardrail(side: PropSide = 'both', opts: GuardrailOpts = {}): this {
+    this._props.push(makeGuardrail(side, opts));
+    return this;
+  }
+
+  /** How important this road is at junctions (see Junction priority). */
+  rank(n: number): this {
+    this._rank = n;
     return this;
   }
 
@@ -212,6 +239,8 @@ export class ProfileBuilder {
       thickness: this._thickness,
       bodyMaterial: this._body,
       markings: marks,
+      props: this._props,
+      rank: this._rank ?? Math.round(core * 2),
       smoothRadiusM: this._smooth,
       coreHalfWidth: core,
       outerHalfWidth: outer,
