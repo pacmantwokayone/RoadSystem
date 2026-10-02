@@ -8,7 +8,7 @@ import { buildChunkGeometry } from '../src/mesh/extrude';
 import { BridgeLibrary } from '../src/structures/library';
 import { bridgeApi, BridgeBuilder } from '../src/structures/builder';
 import { compileBridgeSource, evaluateBridge } from '../src/structures/compile';
-import { bridgeSections, pierPositions } from '../src/structures/sections';
+import { bridgeSections, pierPositions, pierPositionsFor } from '../src/structures/sections';
 import { buildChunkBridge } from '../src/structures/bridgeGeometry';
 import { BridgeLayer } from '../src/structures/bridgeLayer';
 import { defaultBridgeName } from '../src/structures/types';
@@ -25,7 +25,7 @@ const bridges = new BridgeLibrary();
 
 describe('bridge code', () => {
   it('all presets compile, evaluate and have parameters with defaults', () => {
-    expect(bridges.names().sort()).toEqual(['balkenbruecke', 'bogenbruecke', 'eisenbahnbruecke', 'fachwerkbruecke', 'holzsteg', 'plattenbruecke', 'viadukt']);
+    expect(bridges.names().sort()).toEqual(['balkenbruecke', 'bogenbruecke', 'eisenbahnbruecke', 'fachwerkbruecke', 'grossbogen', 'holzsteg', 'plattenbruecke', 'viadukt']);
     for (const n of bridges.names()) {
       const b = bridges.resolve(n);
       expect(b.deck.thickness, n).toBeGreaterThan(0);
@@ -242,7 +242,7 @@ describe('structure geometry', () => {
         }
       }
       // something stands deep in the gorge (ground at the centre is 770)
-      expect(low, name).toBeLessThan(DECK_Y - 20);
+      if (name !== 'grossbogen') expect(low, name).toBeLessThan(DECK_Y - 20); // the single arch springs from the rims
       expect(high, name).toBeGreaterThan(DECK_Y);
     }
   });
@@ -490,5 +490,125 @@ describe('river crossing suggestions', () => {
     const xs = model.get('r')!.points.map((q) => Math.round(q.x));
     expect(new Set(xs).size).toBe(xs.length);
     expect(model.get('r')!.points.length).toBeLessThanOrEqual(7);
+  });
+});
+
+describe('several bridge types on one road, and the single big arch', () => {
+  function roadWithNamed(overrides: Record<number, string>, bridge = 'balkenbruecke'): { rt: RoadRuntime; def: RoadDef } {
+    const lib = new BridgeLibrary();
+    const xs = [3000, 3150, 3200, 3300, 3400, 3450, 3600];
+    const def: RoadDef = {
+      id: 'br', name: 'br', profile: 'hauptstrasse', bridge,
+      points: xs.map((x, i) => ({ x, y: DECK_Y, z: 3000, ...(x >= 3200 && x <= 3400 ? { mode: 'bridge' as const } : {}), ...(overrides[i] ? { bridge: overrides[i] } : {}) })),
+    };
+    const prof = profiles.resolve('hauptstrasse');
+    const rt = new RoadRuntime(def, terrain(), prof, DEFAULT_RUNTIME_OPTIONS, undefined, lib.forRoad(def, prof));
+    rt.namedBridge = (name) => lib.forRoad({ ...def, bridge: name, bridgeParams: undefined }, prof);
+    let guard = 0;
+    while (rt.pendingCount > 0 && guard++ < 50) rt.chunks.forEach((c) => rt.tryBuildChunk(c));
+    return { rt, def };
+  }
+
+  it('a point that names another type splits the run: two sections share the boundary sample', () => {
+    const { rt } = roadWithNamed({ 3: 'viadukt' });
+    const secs = bridgeSections(rt);
+    expect(secs).toHaveLength(2);
+    expect(secs[0].bridge.name).toBe('Balkenbrücke');
+    expect(secs[1].bridge.name).toBe('Viadukt');
+    expect(secs[0].s1).toBe(secs[1].s0);
+    expect(secs[0].i1).toBe(secs[1].i0);
+    expect([secs[0].startsAtRoad, secs[0].endsAtBridge, secs[1].startsAtBridge, secs[1].endsAtRoad]).toEqual([true, true, true, true]);
+    expect([secs[0].endsAtRoad, secs[1].startsAtRoad]).toEqual([false, false]); // no abutment where they meet
+    // and without a naming point there is one section
+    expect(bridgeSections(roadWithNamed({}).rt)).toHaveLength(1);
+  });
+
+  it('a full-height pier stands where two types meet; abutments only where the bridge meets the road', () => {
+    const { rt } = roadWithNamed({ 3: 'viadukt' });
+    let lowest = Infinity;
+    const xs: number[] = [];
+    for (const { b } of allBridge(rt)) {
+      const built = b?.batch.build();
+      if (!built) continue;
+      const pos = built.geometry.getAttribute('position');
+      for (let i = 0; i < pos.count; i++) if (Math.abs(pos.getX(i) - 3300) < 4) { lowest = Math.min(lowest, pos.getY(i)); xs.push(pos.getX(i)); }
+    }
+    expect(lowest).toBeLessThan(DECK_Y - 28); // the gorge floor is at 770
+    expect(xs.length).toBeGreaterThan(20);
+  });
+
+  it('the deck follows each type: its slab is as thick as the type says on either side of the boundary', () => {
+    const { rt } = roadWithNamed({ 3: 'viadukt' });
+    const t0 = rt.bridgeOfSample(bridgeSections(rt)[0].i0 + 1).deck.thickness, t1 = rt.bridgeOfSample(bridgeSections(rt)[1].i0 + 1).deck.thickness;
+    expect(t0).not.toBe(t1);
+    let lowW = Infinity, lowE = Infinity;
+    for (const ch of rt.chunks) {
+      const { geometry } = buildChunkGeometry(rt, ch);
+      const pos = geometry.getAttribute('position');
+      for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i);
+        if (x > 3220 && x < 3280) lowW = Math.min(lowW, pos.getY(i));
+        if (x > 3320 && x < 3380) lowE = Math.min(lowE, pos.getY(i));
+      }
+    }
+    expect(DECK_Y - lowW).toBeLessThan(t0 + 0.4);
+    expect(DECK_Y - lowE).toBeGreaterThan(t1 - 0.4);
+    expect(DECK_Y - lowE).toBeLessThan(t1 + 0.4);
+  });
+
+  it('grossbogen is ONE span over the whole section and its crown touches the underside of the deck', () => {
+    const { rt } = roadWithNamed({}, 'grossbogen');
+    const [sec] = bridgeSections(rt);
+    expect(sec.bridge.piers).toBeNull();
+    const t = rt.bridge.deck.thickness;
+    let crownTop = -Infinity;
+    let ribs = 0;
+    for (const { b } of allBridge(rt)) {
+      const built = b?.batch.build();
+      if (!built) continue;
+      const pos = built.geometry.getAttribute('position');
+      for (let i = 0; i < pos.count; i++) {
+        if (Math.abs(pos.getX(i) - 3300) < 1.5 && pos.getY(i) < DECK_Y - t + 0.01) { crownTop = Math.max(crownTop, pos.getY(i)); ribs++; }
+      }
+    }
+    expect(ribs).toBeGreaterThan(8);
+    expect(crownTop).toBeCloseTo(DECK_Y - t - 0.02, 1);
+  });
+
+  it('arch piers stand under every rib: the foot of a pier reaches out to each rib', () => {
+    // a wide deck (the ribs sit far apart): there must be a pier column under each of them
+    const { rt } = roadWithNamed({}, 'bogenbruecke');
+    const piers = pierPositionsFor(rt, bridgeSections(rt)[0], rt.bridge.piers!.maxSpan);
+    const xp = piers.reduce((best, s) => (Math.abs(s - 300) < Math.abs(best - 300) ? s : best), piers[0]); // the pier in the gorge
+    const ground = gorge(3000 + xp);
+    const ribX = rt.bridge.arch!.spread * rt.profile.coreHalfWidth;
+    const lateral: number[] = [];
+    for (const { b } of allBridge(rt)) {
+      const built = b?.batch.build();
+      if (!built) continue;
+      const pos = built.geometry.getAttribute('position');
+      for (let i = 0; i < pos.count; i++) {
+        // the lowest metre above the ground at that pier: the ribs are far above it, only the pier itself is here
+        if (Math.abs(pos.getX(i) - 3000 - xp) < 2 && pos.getY(i) < ground + 1.2) lateral.push(pos.getZ(i) + 3000);
+      }
+    }
+    expect(lateral.length).toBeGreaterThan(8);
+    expect(Math.max(...lateral)).toBeGreaterThan(ribX - 0.3);
+    expect(Math.min(...lateral)).toBeLessThan(-ribX + 0.3);
+    // and nothing is wasted in the middle: one column per rib, not one slab across both
+    expect(lateral.filter((z) => Math.abs(z) < ribX - 1.5).length).toBe(0);
+  });
+
+  it('spandrel columns are spread evenly over a span, symmetric about its middle', () => {
+    const { rt } = roadWithNamed({}, 'bogenbruecke');
+    const [sec] = bridgeSections(rt);
+    const supports = [sec.s0 + rt.bridge.abutments.depth * 0.5, ...pierPositionsFor(rt, sec, rt.bridge.piers!.maxSpan), sec.s1 - rt.bridge.abutments.depth * 0.5];
+    expect(supports.length).toBeGreaterThanOrEqual(3);
+    // the arch spans from support to support; the same rule gives the column positions
+    const A = rt.bridge.arch!;
+    const span = supports[2] - supports[1];
+    const n = Math.max(2, Math.round(span / A.spandrelSpacing));
+    const cols = Array.from({ length: n - 1 }, (_, i) => supports[1] + (span * (i + 1)) / n);
+    for (let i = 0; i < cols.length; i++) expect(cols[i] - supports[1]).toBeCloseTo(supports[2] - cols[cols.length - 1 - i], 6);
   });
 });

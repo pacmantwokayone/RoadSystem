@@ -181,7 +181,7 @@ export class RoadSystem {
       const bridge = this.resolveBridge(def, prof);
       const old = oldById.get(def.id);
       const open = openings.get(def.id) ?? [];
-      const envKey = underSignature(def, net.roads) + '#' + openingsKey(open);
+      const envKey = underSignature(def, net.roads) + '#' + openingsKey(open) + '#' + this.namedBridgeKey(def, prof);
       if (old && old.def === def && old.profile === prof && old.bridge === bridge && old.trim.start === trim.start && old.trim.end === trim.end && old.envKey === envKey && !this.stale.has(def.id)) {
         nextRoads.push(old);
         continue;
@@ -189,6 +189,7 @@ export class RoadSystem {
       const rt = new RoadRuntime(def, this.terrain, prof, this.opts, trim, bridge);
       rt.openings = open;
       rt.envKey = envKey;
+      rt.namedBridge = (name) => this.resolveBridge({ ...def, bridge: name, bridgeParams: undefined }, prof);
       nextRoads.push(rt);
       if (old) replaced.push([old, rt]);
     }
@@ -227,6 +228,21 @@ export class RoadSystem {
     for (const r of removedRoads) for (const cb of this.removedListeners) cb(r);
     for (const [a, b] of replacedJ) for (const cb of this.junctionReplaced) cb(a, b);
     for (const j of removedJ) for (const cb of this.junctionRemoved) cb(j);
+  }
+
+  private bridgeIds = new WeakMap<BridgeData, number>();
+  private bridgeIdCounter = 0;
+  /** identity of the bridge types that points of a road name: the road is rebuilt when one of their codes changes */
+  private namedBridgeKey(def: RoadDef, prof: ProfileData): string {
+    const names = new Set<string>();
+    for (const p of def.points) if (p.bridge) names.add(p.bridge);
+    if (!names.size) return '';
+    return [...names].sort().map((n) => {
+      const b = this.resolveBridge({ ...def, bridge: n, bridgeParams: undefined }, prof);
+      let id = this.bridgeIds.get(b);
+      if (id === undefined) { id = ++this.bridgeIdCounter; this.bridgeIds.set(b, id); }
+      return `${n}=${id}`;
+    }).join(',');
   }
 
   /** Add a road or replace the one with the same id (used for drafts and tests). */

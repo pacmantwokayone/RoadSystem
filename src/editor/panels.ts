@@ -199,6 +199,7 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
     box.append(
       numberRow('Höhe y (m)', () => pt().y, (v) => editor.setPointAttr(idx, { y: v }), { step: 0.1, fmt: (v) => v.toFixed(1) }),
       selectRow('Typ', [['road', 'Straße'], ['bridge', 'Brücke'], ['tunnel', 'Tunnel'], ['gallery', 'Galerie']], () => pt().mode ?? 'road', (v) => editor.setPointAttr(idx, { mode: v })),
+      ...(editor.bridgeLibrary && (pt().mode ?? 'road') === 'bridge' ? [selectRow('Brückentyp ab hier', [['', 'wie davor (Strasse)'], ...editor.bridgeLibrary.names().map((n) => [n, n] as [string, string])], () => pt().bridge ?? '', (v) => editor.setPointAttr(idx, { bridge: v === '' ? undefined : v }))] : []),
       selectRow('Höhe folgt', [['drape', 'Terrain'], ['fixed', 'fest (y)']], () => pt().elev ?? 'drape', (v) => editor.setPointAttr(idx, { elev: v })),
       numberRow('Breite ×', () => pt().widthScale ?? 1, (v) => editor.setPointAttr(idx, { widthScale: v }), { min: 0.5, max: 3, step: 0.05, slider: true, fmt: (v) => v.toFixed(2) }),
       numberRow('Querneigung °', () => ((pt().banking ?? 0) * 180) / Math.PI, (v) => editor.setPointAttr(idx, { banking: (v * Math.PI) / 180 }), { min: -15, max: 15, step: 0.5, slider: true, fmt: (v) => v.toFixed(1) }),
@@ -238,7 +239,7 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
     const node = editor.selectedNode;
     const ik = node
       ? `node|${node.id}|${node.control ?? ''}|${editor.nodeArms(node.id).map((a) => a.roadId + a.end).join(',')}`
-      : road ? `${road.id}|${road.profile}|${editor.state.pointIndex}|${road.points.length}|${library.names().join(',')}|${road.bridge ?? ''}|${road.attach ? 'a' + road.attach.kind : ''}${road.attachEnd ? 'e' + road.attachEnd.kind : ''}|${road.points.some((p) => p.mode === 'bridge')}|${editor.bridgeLibrary?.names().join(',') ?? ''}` : 'none';
+      : road ? `${road.id}|${road.profile}|${editor.state.pointIndex}|${editor.state.pointIndex !== undefined ? road.points[editor.state.pointIndex]?.mode ?? '' : ''}|${road.points.length}|${library.names().join(',')}|${road.bridge ?? ''}|${road.attach ? 'a' + road.attach.kind : ''}${road.attachEnd ? 'e' + road.attachEnd.kind : ''}|${road.points.some((p) => p.mode === 'bridge')}|${editor.bridgeLibrary?.names().join(',') ?? ''}` : 'none';
     if (ik !== inspKey) {
       inspKey = ik;
       controls = [];

@@ -24,6 +24,8 @@ export interface RoadPoint {
   elev?: ElevationMode;
   /** Roll about the path tangent, radians. Positive = right edge lower. */
   banking?: number;
+  /** Bridge type from this point on (until a later point names another): lets one road have a viaduct and a single big arch. Default: the road's `bridge`. */
+  bridge?: string;
 }
 
 /** A junction: where the ends of two or more roads meet. The node position is authoritative —

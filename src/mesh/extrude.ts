@@ -173,9 +173,10 @@ export function buildChunkGeometry(
     const horizR = tmpR.set(frame.right.x, 0, frame.right.z);
     if (horizR.lengthSq() < 1e-8) horizR.set(1, 0, 0);
     horizR.normalize();
+    const deckThickness = onBridge ? rt.bridgeOfSample(i).deck.thickness : 0;
     const bottomY = (top: THREE.Vector3, groundY: number): number => {
       // a bridge is a slab in the air: it is as thick as its deck, whatever lies below
-      if (onBridge) return top.y - rt.bridge.deck.thickness;
+      if (onBridge) return top.y - deckThickness;
       const byThickness = top.y - profile.thickness;
       const wanted = Number.isFinite(groundY) ? Math.min(byThickness, groundY - opts.wallMarginM) : byThickness;
       return Math.max(wanted, top.y - opts.maxWallDepthM);
@@ -227,7 +228,7 @@ export function buildChunkGeometry(
     for (let seg = 0; seg < S; seg++) {
       quad(listFor(profile.segments[seg].material), b0 + seg * 2, b0 + seg * 2 + 1, b1 + seg * 2, b1 + seg * 2 + 1);
     }
-    const body = listFor(bridgeRing[r] && bridgeRing[r + 1] ? rt.bridge.deck.material : profile.bodyMaterial);
+    const body = listFor(bridgeRing[r] && bridgeRing[r + 1] ? rt.bridgeOfSample(chunk.i0 + r).deck.material : profile.bodyMaterial);
     const w = S * 2;
     quad(body, b0 + w, b0 + w + 1, b1 + w, b1 + w + 1);
     quad(body, b0 + w + 2, b0 + w + 3, b1 + w + 2, b1 + w + 3);

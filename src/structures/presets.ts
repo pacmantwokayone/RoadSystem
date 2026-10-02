@@ -98,9 +98,23 @@ export const params = {
 };
 export default (p, B) => B.bridge('Eisenbahnbrücke')
   .deck({ thickness: p.box, material: 'concrete' })
-  .piers({ maxSpan: p.maxSpan, shape: 'wall', width: 3.2, depth: 1.6, taper: 0.25, cap: true, capHeight: 0.9, footing: 0.7, minHeight: 3 })
+  .piers({ maxSpan: p.maxSpan, shape: 'twin', width: 1.8, depth: 2.4, taper: 0.25, cap: true, capHeight: 0.9, footing: 0.7, minHeight: 3 })
   .abutments({ depth: 3, wing: 8 })
   .railing('steel');
+`;
+
+export const GROSSBOGEN = `
+// Grossbogen: ein einziger weit gespannter Steinbogen über Fluss oder Schlucht. Keine Zwischenpfeiler: der ganze Abschnitt ist eine Spannweite.
+export const params = {
+  rise:     { type: 'float', label: 'Pfeilhöhe (Anteil der Spannweite)', min: 0.1, max: 0.45, step: 0.01, default: 0.3 },
+  ribWidth: { type: 'float', label: 'Rippenbreite', min: 1, max: 4, step: 0.1, default: 2.2 },
+  ribDepth: { type: 'float', label: 'Rippenstärke', min: 0.8, max: 3, step: 0.1, default: 1.8 },
+};
+export default (p, B) => B.bridge('Grossbogen')
+  .deck({ thickness: 0.9, material: 'granite' })
+  .arch({ rise: p.rise, ribs: 2, ribWidth: p.ribWidth, ribDepth: p.ribDepth, spandrel: 'columns', spandrelSpacing: 8, spread: 0.72, material: 'granite' })
+  .abutments({ depth: 5, wing: 12, material: 'granite' })
+  .railing({ type: 'steel', height: 1.1 });
 `;
 
 export const BRIDGE_PRESET_SOURCES: Record<string, string> = {
@@ -111,4 +125,5 @@ export const BRIDGE_PRESET_SOURCES: Record<string, string> = {
   bogenbruecke: BOGENBRUECKE,
   fachwerkbruecke: FACHWERKBRUECKE,
   eisenbahnbruecke: EISENBAHNBRUECKE,
+  grossbogen: GROSSBOGEN,
 };

@@ -158,18 +158,28 @@ export function railDemoRoads(ground: (x: number, z: number) => number = waterDe
   const R = 180, X0 = 4460, cx = X0, cz = Z + R;
   const pts: Array<[number, number]> = [[4310, Z], [4460, Z]];
   for (let k = 1; k <= 6; k++) { const a = (k / 6) * (Math.PI / 2); pts.push([cx + R * Math.sin(a), cz - R * Math.cos(a)]); }
-  for (let z = 2140; z <= 3320; z += 60) pts.push([4640, z]);
-  // flat to the start of the curve, then climbing 1.4 % to the deck height at z = 2440
+  const zs: number[] = [];
+  for (let z = 2140; z <= 2900; z += 60) zs.push(z);
+  zs.push(2940, 3000, 3060);
+  for (let z = 3120; z <= 3300; z += 60) zs.push(z);
+  zs.push(3340, 3375);
+  for (const z of zs) pts.push([4640, z]);
+  // flat to the start of the curve, then climbing 1.4 % to the deck height at z = 2440 and on at 2 % up to the south tunnel: the deck is
+  // some 20 m above the river, so the river can be crossed with ONE big arch
   const DECK = 791.5;
   const L: number[] = [0];
   for (let i = 1; i < pts.length; i++) L.push(L[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
   const sUp0 = L[1], sUp1 = L[pts.findIndex(([, z]) => z >= 2440)];
+  const yAt = (z: number, i: number): number => (z <= 2440 ? Y0 + (DECK - Y0) * Math.min(1, Math.max(0, (L[i] - sUp0) / (sUp1 - sUp0))) : DECK + 0.02 * (z - 2440));
   const east: RoadPoint[] = pts.map(([x, z], i) => {
-    const y = Y0 + (DECK - Y0) * Math.min(1, Math.max(0, (L[i] - sUp0) / (sUp1 - sUp0)));
-    return y - ground(x, z) > 4.5 ? P(x, z, y, { mode: 'bridge' }) : P(x, z, y, { elev: 'fixed' });
+    const y = yAt(z, i);
+    const p = y - ground(x, z) > 4.5 ? P(x, z, y, { mode: 'bridge' }) : P(x, z, y, { elev: 'fixed' });
+    // the river crossing is one single arch; the viaduct on both sides has many
+    if (z === 2940) p.bridge = 'grossbogen';
+    if (z === 3060) p.bridge = 'bogenbruecke';
+    return p;
   });
-  east.push(P(4640, 3345, DECK, { elev: 'fixed' }));
-  for (const z of [3385, 3440, 3520, 3600]) east.push(P(4640, z, DECK, { mode: 'tunnel' }));
+  for (const z of [3405, 3470, 3550, 3630]) east.push(P(4640, z, DECK + 0.02 * (z - 2440), { mode: 'tunnel' }));
   roads.push({ id: 'bahn-ost', name: 'Bahn Ost (Viadukt)', profile: 'gleis_doppel', bridge: 'bogenbruecke', points: east });
   // a siding leaves the right-hand track east of the station (a switch: the branch grows out of the main road's edge)
   const siding = branchPoints({

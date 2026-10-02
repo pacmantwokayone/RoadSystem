@@ -140,6 +140,30 @@ export class RoadRuntime {
   /** signature of the roads running under this road's bridges and of the openings: the road is rebuilt when it changes */
   envKey = '';
 
+  /** resolves a bridge type by name (set by the RoadSystem): a point may name its own type, see RoadPoint.bridge */
+  namedBridge: (name: string) => BridgeData = () => this.bridge;
+  private bridgeCache = new Map<string, BridgeData>();
+  private pointBridgeNames: Array<string | undefined> | null = null;
+
+  /** the bridge type named for the segment a sample lies on (undefined = the road's own) */
+  bridgeNameAt(sampleIndex: number): string | undefined {
+    if (!this.pointBridgeNames) {
+      const names: Array<string | undefined> = [];
+      this.def.points.forEach((p, k) => { names.push(p.bridge ?? (k > 0 ? names[k - 1] : undefined)); });
+      this.pointBridgeNames = names;
+    }
+    return this.pointBridgeNames[Math.min(this.samples[sampleIndex].seg, this.pointBridgeNames.length - 1)];
+  }
+
+  /** what the bridge looks like at a sample: the type named by the nearest point before it, else the road's own */
+  bridgeOfSample(sampleIndex: number): BridgeData {
+    const name = this.bridgeNameAt(sampleIndex);
+    if (name === undefined) return this.bridge;
+    let b = this.bridgeCache.get(name);
+    if (!b) { b = this.namedBridge(name); this.bridgeCache.set(name, b); }
+    return b;
+  }
+
   /** is arc length s on `side` (+1 = right) inside an opening? */
   isOpen(side: 1 | -1, s: number): boolean {
     for (const o of this.openings) if (o.side === side && s >= o.s0 && s <= o.s1) return true;

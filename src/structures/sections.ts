@@ -3,6 +3,7 @@
 
 import { Vector3 } from 'three';
 import type { RoadRuntime } from '../runtime/roadRuntime';
+import type { BridgeData } from './types';
 
 export interface BridgeSection {
   /** first / last sample index of the section */
@@ -14,6 +15,11 @@ export interface BridgeSection {
   /** the section's start / end is a transition to ordinary road (abutment there) */
   startsAtRoad: boolean;
   endsAtRoad: boolean;
+  /** what this section looks like (a point may switch the bridge type, which splits a run of bridge points into sections) */
+  bridge: BridgeData;
+  /** the section starts / ends where the neighbouring section of ANOTHER bridge type takes over (a pier stands there, no abutment) */
+  startsAtBridge: boolean;
+  endsAtBridge: boolean;
 }
 
 /** shortest section worth a structure, metres */
@@ -26,13 +32,26 @@ export function bridgeSections(rt: RoadRuntime): BridgeSection[] {
   if (hit) return hit;
   const out: BridgeSection[] = [];
   const n = rt.samples.length;
-  for (let i = 0; i < n; i++) {
-    if (rt.samples[i].mode !== 'bridge') continue;
+  const isBridge = (i: number): boolean => rt.samples[i].mode === 'bridge';
+  let startsAtBridge = false;
+  let i = 0;
+  while (i < n) {
+    if (!isBridge(i)) { i++; continue; }
+    const name = rt.bridgeNameAt(i);
     let j = i;
-    while (j + 1 < n && rt.samples[j + 1].mode === 'bridge') j++;
+    while (j + 1 < n && isBridge(j + 1) && rt.bridgeNameAt(j + 1) === name) j++;
+    // another bridge type takes over at the next sample: that sample is shared by both sections
+    const endsAtBridge = j + 1 < n && isBridge(j + 1);
+    if (endsAtBridge) j++;
     const s0 = rt.samples[i].s, s1 = rt.samples[j].s;
-    if (s1 - s0 >= MIN_BRIDGE_LENGTH_M) out.push({ i0: i, i1: j, s0, s1, startsAtRoad: i > 0, endsAtRoad: j < n - 1 });
-    i = j;
+    if (s1 - s0 >= MIN_BRIDGE_LENGTH_M) {
+      out.push({
+        i0: i, i1: j, s0, s1, bridge: rt.bridgeOfSample(i), startsAtBridge, endsAtBridge,
+        startsAtRoad: i > 0 && !startsAtBridge, endsAtRoad: j < n - 1 && !endsAtBridge,
+      });
+    }
+    startsAtBridge = endsAtBridge;
+    i = endsAtBridge ? j : j + 1;
   }
   cache.set(rt, out);
   return out;

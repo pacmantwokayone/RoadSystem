@@ -26,6 +26,7 @@ export function sanitizePoint(raw: unknown): RoadPoint | null {
   if (typeof raw.elev === 'string' && (ELEVS as string[]).includes(raw.elev) && raw.elev !== 'drape') p.elev = raw.elev as ElevationMode;
   const b = num(raw.banking);
   if (b !== undefined && b !== 0) p.banking = Math.min(0.5, Math.max(-0.5, b));
+  if (typeof raw.bridge === 'string' && raw.bridge) p.bridge = raw.bridge;
   return p;
 }
 

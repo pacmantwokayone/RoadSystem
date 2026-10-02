@@ -41,7 +41,7 @@ class Ctx {
   readonly batch = new GeometryBatch();
   readonly placements: Placement[] = [];
 
-  constructor(readonly rt: RoadRuntime, readonly chunk: RoadChunk, readonly sampler: ChunkSampler, readonly bridge: BridgeData) {
+  constructor(readonly rt: RoadRuntime, readonly chunk: RoadChunk, readonly sampler: ChunkSampler, public bridge: BridgeData) {
     this.isLast = chunk.index === rt.chunks.length - 1;
     this.sMin = sampler.sMin;
     this.sMax = sampler.sMax;
@@ -214,13 +214,14 @@ function lamps(c: Ctx, sec: BridgeSection): void {
 // ---- supports -----------------------------------------------------------------------------------
 
 /** One support (pier) at arc length s whose top is at absolute height topY. */
-function support(c: Ctx, s: number, topY: number, withCap: boolean): void {
+function support(c: Ctx, s: number, topY: number, withCap: boolean, size?: { across: number; along: number; round?: boolean; offsets?: number[]; minHeight?: number }): void {
   const p = c.bridge.piers;
   if (!p) return;
   const raw = c.raw(p.material);
   const ax = c.axes(s);
-  const offsets = p.shape === 'twin' ? [-0.55 * c.halfW, 0.55 * c.halfW] : [0];
-  const across = p.shape === 'wall' ? p.width : p.width, along = p.depth;
+  const offsets = size?.offsets ?? (p.shape === 'twin' && !size ? [-0.55 * c.halfW, 0.55 * c.halfW] : [0]);
+  const across = size?.across ?? p.width, along = size?.along ?? p.depth;
+  const round = size?.round ?? p.round;
   const capH = withCap && (p.cap || p.shape === 'hammer') ? p.capHeight : 0;
   const colTop = topY - capH;
   let placed = false;
@@ -228,12 +229,12 @@ function support(c: Ctx, s: number, topY: number, withCap: boolean): void {
     const centre = ax.pos.clone().addScaledVector(ax.right, lx);
     const gy = c.ground(centre.x, centre.z);
     if (gy === null) continue;
-    if (colTop - gy < p.minHeight) continue;
+    if (colTop - gy < (size?.minHeight ?? p.minHeight)) continue;
     placed = true;
     const bottom = gy - EMBED_M;
     const f = 1 - p.taper;
     const top = new THREE.Vector3(centre.x, colTop, centre.z), bot = new THREE.Vector3(centre.x, bottom, centre.z);
-    if (p.round) loft(raw, [circleRing(top, ax.right, ax.tan, across / 2, along / 2), circleRing(bot, ax.right, ax.tan, (across / 2) * f, (along / 2) * f)], { smooth: true, capStart: true, capEnd: true });
+    if (round) loft(raw, [circleRing(top, ax.right, ax.tan, across / 2, along / 2), circleRing(bot, ax.right, ax.tan, (across / 2) * f, (along / 2) * f)], { smooth: true, capStart: true, capEnd: true });
     else loft(raw, [rectRing(top, ax.right, ax.tan, across / 2, along / 2), rectRing(bot, ax.right, ax.tan, (across / 2) * f, (along / 2) * f)], { capStart: true, capEnd: true });
     if (p.footing > 0) {
       const fc = new THREE.Vector3(centre.x, gy - 0.3, centre.z);
@@ -307,38 +308,57 @@ function wing(c: Ctx, sec: BridgeSection, atStart: boolean): void {
 
 // ---- arch ---------------------------------------------------------------------------------------
 
+/** lateral positions of the arch ribs */
+function ribOffsets(c: Ctx): number[] {
+  const A = c.bridge.arch;
+  if (!A) return [0];
+  return Array.from({ length: A.ribs }, (_, r) => (A.ribs === 1 ? 0 : (-1 + (2 * r) / (A.ribs - 1)) * A.spread * c.halfW));
+}
+
 function arch(c: Ctx, sec: BridgeSection): void {
   const A = c.bridge.arch;
   const P = c.bridge.piers;
   if (!A) return;
-  const supports = [sec.s0 + c.bridge.abutments.depth * 0.5, ...(P ? pierPositionsFor(c.rt, sec, P.maxSpan) : []), sec.s1 - c.bridge.abutments.depth * 0.5];
+  const inset = (atBridge: boolean): number => (atBridge ? 0 : c.bridge.abutments.depth * 0.5);
+  const supports = [sec.s0 + inset(sec.startsAtBridge), ...(P ? pierPositionsFor(c.rt, sec, P.maxSpan) : []), sec.s1 - inset(sec.endsAtBridge)];
   const raw = c.raw(A.material);
   const groundAt = (s: number): number | null => {
     const q = c.sampler.point(s, 0, 0);
     // the section's end supports lie inside the chunk range only when owned; elsewhere use the road's own probe
     return c.ground(q.pos.x, q.pos.z);
   };
+  const offsets = ribOffsets(c);
 
+  // geometry of every span first: springing heights, rise. The crown always touches the underside of the deck; where the arch cannot
+  // be tall enough for that (a high viaduct) the springing is lifted and the supports grow into piers that carry the arches on top.
+  interface Span { sa: number; sb: number; ya: number; yb: number; h: number; ok: boolean }
+  const spans: Span[] = [];
   for (let k = 0; k < supports.length - 1; k++) {
     const sa = supports[k], sb = supports[k + 1];
-    const lo = Math.max(sa, c.sMin), hi = Math.min(sb, c.sMax);
-    if (hi - lo < 0.05 && !(c.owns(sa))) continue;
     const ga = groundAt(sa), gb = groundAt(sb);
-    if (ga === null || gb === null) continue;
+    if (ga === null || gb === null) { spans.push({ sa, sb, ya: 0, yb: 0, h: 0, ok: false }); continue; }
     const span = sb - sa;
-    const ya = ga + 0.3, yb = gb + 0.3;
-    const mid = (sa + sb) / 2;
-    const crownRoom = c.deckBottom(mid) - 0.5 - A.ribDepth / 2 - (ya + yb) / 2;
+    const ymid = (ga + gb) / 2 + 0.3;
+    const crownRoom = c.deckBottom((sa + sb) / 2) - 0.02 - A.ribDepth / 2 - ymid;
+    if (crownRoom < 0.4) { spans.push({ sa, sb, ya: ga + 0.3, yb: gb + 0.3, h: 0, ok: false }); continue; } // no room: the deck simply spans
     const h = Math.min(A.rise * span, crownRoom);
-    if (h < 0.4) continue; // no room for an arch: the deck simply spans (piers carry it)
+    const lift = crownRoom - h;
+    spans.push({ sa, sb, ya: ga + 0.3 + lift, yb: gb + 0.3 + lift, h, ok: true });
+  }
+
+  spans.forEach((sp, k) => {
+    if (!sp.ok) return;
+    const { sa, sb, ya, yb, h } = sp;
+    const span = sb - sa;
+    const lo = Math.max(sa, c.sMin), hi = Math.min(sb, c.sMax);
+    if (hi - lo < 0.05 && !c.owns(sa)) return;
     const centreY = (s: number): number => {
       const u = (s - sa) / span;
       return ya + (yb - ya) * u + 4 * h * u * (1 - u);
     };
     if (hi - lo >= 0.05) {
       const st = c.stations(lo, hi, CURVE_STEP_M);
-      for (let r = 0; r < A.ribs; r++) {
-        const x = A.ribs === 1 ? 0 : (-1 + (2 * r) / (A.ribs - 1)) * A.spread * c.halfW;
+      for (const x of offsets) {
         const rings = st.map((s) => {
           const dy = centreY(s) - c.deckY(s);
           return [
@@ -362,37 +382,55 @@ function arch(c: Ctx, sec: BridgeSection): void {
           loft(raw, rings, { capStart: lo <= sa + 1e-6, capEnd: hi >= sb - 1e-6 });
         }
       } else if (A.spandrel === 'columns') {
-        const first = Math.ceil((sa + A.spandrelSpacing * 0.5) / A.spandrelSpacing) * A.spandrelSpacing;
-        for (let s = first; s < sb - A.spandrelSpacing * 0.4; s += A.spandrelSpacing) {
+        // evenly spaced between the supports, so the pattern is the same whatever the chunking and symmetric over every span
+        const n = Math.max(2, Math.round(span / A.spandrelSpacing));
+        for (let i = 1; i < n; i++) {
+          const s = sa + (span * i) / n;
           if (s < lo || s >= hi || !c.owns(s)) continue;
           const ax = c.axes(s);
           const top = c.deckBottom(s) + (c.bridge.girders?.depth ?? 0);
-          const base = centreY(s) + A.ribDepth * 0.3;
-          if (top - base < 0.4) continue;
-          for (let r = 0; r < A.ribs; r++) {
-            const x = A.ribs === 1 ? 0 : (-1 + (2 * r) / (A.ribs - 1)) * A.spread * c.halfW;
+          const base = centreY(s);
+          if (top - base < 0.3) continue;
+          for (const x of offsets) {
             const centre = ax.pos.clone().addScaledVector(ax.right, x).setY((top + base) / 2);
             box(raw, centre, ax.right, UP, ax.tan, A.ribWidth * 0.35, (top - base) / 2, 0.35);
           }
         }
       }
     }
-    // springing at the interior supports: a pier from the ground up to the arch's springing
-    if (P && k > 0 && c.owns(sa)) support(c, sa, Math.max(ya, centreY(sa)) + A.ribDepth / 2, false);
-  }
+    // interior supports: a pier under every rib, from the ground up to the springing (taller than the arch's own rise on a high viaduct)
+    if (P && k > 0 && c.owns(sa)) {
+      const prev = spans[k - 1];
+      const top = Math.max(sp.ya, prev.ok ? prev.yb : sp.ya) + A.ribDepth / 2;
+      support(c, sa, top, false, { across: A.ribWidth + 0.5, along: Math.max(P.depth, A.ribDepth + 0.6), round: false, offsets, minHeight: 0 });
+    }
+  });
+}
+
+/** A full-height pier where two bridge types meet (or the end of one meets the start of the next). */
+function boundaryPier(c: Ctx, s: number, prev: BridgeData, next: BridgeData): void {
+  const piers = next.piers ?? prev.piers;
+  if (!piers) return;
+  const saved = c.bridge;
+  c.bridge = { ...saved, piers: { ...piers, cap: true } };
+  support(c, s, c.deckBottom(s), true, { across: 2 * (c.halfW - 0.3), along: Math.max(piers.depth, 2.2), round: false, offsets: [0] });
+  c.bridge = saved;
 }
 
 // ---- entry point -----------------------------------------------------------------------------
 
 export function buildChunkBridge(rt: RoadRuntime, chunk: RoadChunk): BridgeBuild | null {
   if (chunk.state !== 'ready') return null;
-  const bridge = rt.bridge;
-  const reach = bridge.abutments.wing;
-  const sections = bridgeSections(rt).filter((s) => s.s1 >= rt.samples[chunk.i0].s - reach - 1e-6 && s.s0 <= rt.samples[chunk.i1].s + reach + 1e-6);
+  const all = bridgeSections(rt);
+  const sections = all.filter((s) => {
+    const reach = s.bridge.abutments.wing;
+    return s.s1 >= rt.samples[chunk.i0].s - reach - 1e-6 && s.s0 <= rt.samples[chunk.i1].s + reach + 1e-6;
+  });
   if (!sections.length) return null;
   const sampler = new ChunkSampler(rt, chunk);
-  const c = new Ctx(rt, chunk, sampler, bridge);
+  const c = new Ctx(rt, chunk, sampler, sections[0].bridge);
   for (const sec of sections) {
+    c.bridge = sec.bridge;
     const a = Math.max(sec.s0, c.sMin), b = Math.min(sec.s1, c.sMax);
     if (b - a > 0.05) {
       girders(c, a, b, sec);
@@ -402,7 +440,12 @@ export function buildChunkBridge(rt: RoadRuntime, chunk: RoadChunk): BridgeBuild
     lamps(c, sec);
     piers(c, sec);
     arch(c, sec);
-    // a branch that is attached to a road rests on it at its nose: no abutment there
+    // where another bridge type takes over a pier stands; where the bridge meets the road an abutment does. A branch that is attached to
+    // a road rests on it at its nose: no abutment there.
+    if (sec.startsAtBridge && c.owns(sec.s0)) {
+      const prevSec = all[all.indexOf(sec) - 1];
+      if (prevSec) boundaryPier(c, sec.s0, prevSec.bridge, sec.bridge);
+    }
     if (sec.i0 === 0 ? !rt.def.attach : sec.startsAtRoad) { abutment(c, sec.s0, true); wing(c, sec, true); }
     if (sec.i1 === rt.samples.length - 1 ? !rt.def.attachEnd : sec.endsAtRoad) { abutment(c, sec.s1, false); wing(c, sec, false); }
   }

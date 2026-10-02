@@ -11,9 +11,9 @@ export function bridgePierObstacles(roads: RoadSystem, water: WaterSystem): (riv
   return (riverId) => {
     const out: ExternalObstacle[] = [];
     for (const rt of roads.runtimes) {
-      const piers = rt.bridge?.piers;
-      if (!piers) continue;
       for (const sec of bridgeSections(rt)) {
+        const piers = sec.bridge.piers;
+        if (!piers) continue;
         for (const s of pierPositionsFor(rt, sec, piers.maxSpan)) {
           const p = rt.sampled.curve.pointAt(s);
           const hit = water.field.waterAt(p.x, flipZ(p.z));

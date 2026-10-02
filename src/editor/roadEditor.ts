@@ -347,7 +347,7 @@ export class RoadEditor {
       const p = d.points[index];
       if (!p) return;
       for (const [k, v] of Object.entries(patch)) {
-        const neutral = (k === 'mode' && v === 'road') || (k === 'elev' && v === 'drape') || (k === 'widthScale' && v === 1) || (k === 'banking' && v === 0);
+        const neutral = (k === 'mode' && v === 'road') || (k === 'elev' && v === 'drape') || (k === 'widthScale' && v === 1) || (k === 'banking' && v === 0) || (k === 'bridge' && (v === '' || v === undefined));
         if (neutral) delete (p as unknown as Record<string, unknown>)[k];
         else (p as unknown as Record<string, unknown>)[k] = v;
       }
