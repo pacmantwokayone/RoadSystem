@@ -27,8 +27,8 @@ Phase 0–8 fertig plus Tunnel/Kreisel (Grundlagen) (Setup, Core, Profile + Extr
 - `src/tunnel` – Tunnel: Abschnitte aus Punkten mit Typ `tunnel`, Auskleidung + Lichtbänder, Portale, Geländeeinschnitt (`TunnelField`), `TunnelLayer`/`TunnelSystem`
 - `src/rail` – Schienen: Gleisprofile (`gleis`, `gleis_doppel`, `bahnhof`; `.rail().catenary().signals()` im Profil-DSL), Schwellen, Schienen, Fahrleitung (Masten mit Auslegern,
   Tragseil mit Durchhang, Fahrdraht mit Zickzack, Hänger), Lichtsignale, Perrondächer; `RailLayer`. Gleisbett = normale Strassenoberfläche, daher gehen Brücken (`eisenbahnbruecke`, Bogenviadukt),
-  Tunnel und Geländeanpassung ohne Sonderfall
-- `src/network/branch.ts` + `interchange.ts` – Abzweige (Fahrstreifen-/Gleis-Weiche wächst aus dem Rand der Hauptstrasse) und ein Autobahnkreuz (Hochstrasse auf Stelzen, vier Flyover-Rampen); Brückenpfeiler weichen Strassen darunter aus
+  Tunnel und Geländeanpassung ohne Sonderfall; Weichen mit Zungen/Herzstück/Radlenker und schaltbarer Stellung, `RailNetwork`, Züge (`TrainLayer`) mit Blocksignalen, Bahnübergänge (`CrossingLayer`)
+- `src/network/branch.ts` + `attach.ts` + `interchange.ts` – Abzweige als bearbeitbare Objekte (`RoadDef.attach`: Ausfahrt mit Verzögerungsstreifen, Einfahrt, Rampe, Gleis-Weiche; der Kopf folgt der Hauptstrasse, Geländer und Leitplanken sind dort offen) und ein Autobahnkreuz (Hochstrasse auf Stelzen, vier Flyover-Rampen); Brückenpfeiler weichen Strassen darunter aus
 - `src/network/roundabout.ts` – Kreisel als Ring aus Strassen + Knoten (`buildRoundabout`), `findRoundabouts`; Mittelinsel im `IslandLayer`
 - `src/junction` – Knoten-Steuerung (Vortritt, Haltelinien, Fussgängerstreifen) und Ampel-Phasenplan/-Controller (reine Funktionen der Zeit);
   dazu `props/signalLayer.ts` (Ampeln, Lampen per Vertexfarbe), `mesh/junctionMarkings.ts`, `network/pavement.ts` + `mesh/junctionPavement.ts` (Trottoir-Ecken)

@@ -56,7 +56,7 @@ export class ChunkSampler {
    * line; default: the profile surface at xp. Beyond the profile's outer edge the surface is the terrain
    * when known (else the outer edge height).
    */
-  point(s: number, xp: number, y?: number): SurfacePoint {
+  point(s: number, xp: number, y?: number, scaled = true): SurfacePoint {
     const rt = this.rt;
     const r = this.ringAt(s);
     const r2 = Math.min(r + 1, this.sections.length - 1);
@@ -65,7 +65,8 @@ export class ChunkSampler {
     const A = this.sections[r], B = this.sections[r2];
     const outside = Math.abs(xp) > rt.profile.outerHalfWidth;
     const yy = y ?? profileHeightAt(rt.profile, xp);
-    const pa = A.at(A.mapX(xp), yy), pb = B.at(B.mapX(xp), yy);
+    // `scaled = false`: xp is a plain distance from the centre line (a track's gauge must not shrink where the road's width is scaled)
+    const pa = A.at(scaled ? A.mapX(xp) : xp, yy), pb = B.at(scaled ? B.mapX(xp) : xp, yy);
     const pos = pa.lerp(pb, f);
     if (outside && y === undefined) {
       const g = rt.groundAtThree(pos.x, pos.z);

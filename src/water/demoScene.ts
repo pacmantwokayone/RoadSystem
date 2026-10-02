@@ -6,7 +6,7 @@ import { autoLevelRiver } from './autolevel';
 import type { NodeDef, RoadDef, RoadPoint } from '../network/types';
 import { buildRoundabout } from '../network/roundabout';
 import { buildStackInterchange } from '../network/interchange';
-import { branchPoints } from '../network/branch';
+import type { TrainSpec } from '../rail/train';
 import type { LakeDef, RiverDef, RiverPoint } from './types';
 
 /** level ground on the plateau for the motorway interchange */
@@ -153,10 +153,10 @@ export function railDemoRoads(ground: (x: number, z: number) => number = waterDe
   const west: RoadPoint[] = [T(3740), T(3800), T(3860), T(3930), T(4005), P(4040, Z, Y0, { elev: 'fixed' }), P(4090, Z, Y0, { elev: 'fixed' })];
   const roads: RoadDef[] = [{ id: 'bahn-west', name: 'Bahn West (Tunnel)', profile: 'gleis_doppel', points: west }];
   // the station: two side platforms, canopies, benches, lamps
-  roads.push({ id: 'bahnhof', name: 'Talbahnhof', profile: 'bahnhof', points: [P(4090, Z, Y0, { elev: 'fixed' }), P(4200, Z, Y0, { elev: 'fixed' }), P(4310, Z, Y0, { elev: 'fixed' })] });
+  roads.push({ id: 'bahnhof', name: 'Talbahnhof', profile: 'bahnhof', points: [P(4090, Z, Y0, { elev: 'fixed' }), P(4190, Z, Y0, { elev: 'fixed' }), P(4290, Z, Y0, { elev: 'fixed' })] });
   // east: curve to the south and up onto the viaduct, over the river, into the south tunnel
   const R = 180, X0 = 4460, cx = X0, cz = Z + R;
-  const pts: Array<[number, number]> = [[4310, Z], [4460, Z]];
+  const pts: Array<[number, number]> = [[4290, Z], [4460, Z]];
   for (let k = 1; k <= 6; k++) { const a = (k / 6) * (Math.PI / 2); pts.push([cx + R * Math.sin(a), cz - R * Math.cos(a)]); }
   const zs: number[] = [];
   for (let z = 2140; z <= 2900; z += 60) zs.push(z);
@@ -181,14 +181,26 @@ export function railDemoRoads(ground: (x: number, z: number) => number = waterDe
   });
   for (const z of [3405, 3470, 3550, 3630]) east.push(P(4640, z, DECK + 0.02 * (z - 2440), { mode: 'tunnel' }));
   roads.push({ id: 'bahn-ost', name: 'Bahn Ost (Viadukt)', profile: 'gleis_doppel', bridge: 'bogenbruecke', points: east });
-  // a siding leaves the right-hand track east of the station (a switch: the branch grows out of the main road's edge)
-  const siding = branchPoints({
-    main: { points: east }, s: 4330 - 4310, side: 1, halfMain: 2.25, halfBranch: 0, taper: 100, gap: 4.5, step: 10,
-    tail: [P(4440, Z - 6.75, Y0, { elev: 'fixed' }), P(4450, Z - 6.75, Y0, { elev: 'fixed' })],
-  }).map((p) => ({ ...p, y: p.y - 0.02, elev: 'fixed' as const }));
-  roads.push({ id: 'bahn-stich', name: 'Abstellgleis', profile: 'gleis', points: siding });
+  // a siding leaves the right-hand track east of the station over a switch (attached to the main line: it follows when the line is edited)
+  roads.push({
+    id: 'bahn-stich', name: 'Abstellgleis', profile: 'gleis',
+    attach: { road: 'bahn-ost', at: { x: 4310, z: Z }, side: 1, dir: 1, kind: 'switch', halfMain: 2.25, halfBranch: 0, grow: 60, parallel: 0, taper: 60, taperStart: 0, gap: 4.5, dy: -0.02, state: 'straight', head: 0 },
+    points: [P(4400, Z - 6.75, Y0, { elev: 'fixed' }), P(4426, Z - 6.75, Y0, { elev: 'fixed' })],
+  });
+  // a country road crosses the line on the level, just east of the siding: Bahnübergang with barriers (the road lies at rail-head height there)
+  const yc = Y0 + 0.3;
+  roads.push({
+    id: 'bahnuebergang', name: 'Feldweg (Bahnübergang)', profile: 'gemeindestrasse',
+    points: [P(4440, 1760, ground(4440, 1760)), P(4440, 1850, yc, { elev: 'fixed' }), P(4440, 1950, yc, { elev: 'fixed' }), P(4440, 2040, ground(4440, 2040))],
+  });
   return roads;
 }
+
+/** two trains on the demo railway (a negative `s` is measured from the end of the road): they meet at the station, stop at the platforms, turn round at the ends of the line */
+export const RAIL_DEMO_TRAINS: TrainSpec[] = [
+  { id: 'IC 1', start: { roadId: 'bahn-west', s: 150, dir: 1 }, coaches: 4 },
+  { id: 'IR 2', start: { roadId: 'bahn-ost', s: -160, dir: -1 }, coaches: 3 },
+];
 
 /**
  * The road test field on the level ground south of the river: the Talstrasse comes over the bridge into a roundabout; from there a village

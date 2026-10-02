@@ -1,7 +1,8 @@
-// Geometry of a railway, per road chunk: sleepers, rails, overhead line (masts with cantilevers, messenger wire, contact wire, droppers)
-// and light signals. The ballast bed itself is ordinary road surface (see the `gleis` profiles); this adds what stands on it. Everything
-// is positioned from the same ring sections as the road body (ChunkSampler), so it follows slopes, banking, bridges and tunnels, and every
-// chunk draws from absolute arc lengths so nothing doubles or drops at a chunk border.
+// Geometry of a railway, per road chunk: sleepers, rails, track switches (blades, frog, check rails, long sleepers, lantern), overhead
+// line (masts with cantilevers, messenger wire, contact wire, droppers) and light signals. The ballast bed itself is ordinary road surface
+// (see the `gleis` profiles); this adds what stands on it. Everything is positioned from the same ring sections as the road body
+// (ChunkSampler), so it follows slopes, banking, bridges and tunnels, and every chunk draws from absolute arc lengths so nothing doubles
+// or drops at a chunk border.
 
 import * as THREE from 'three';
 import type { RoadChunk, RoadRuntime } from '../runtime/roadRuntime';
@@ -10,7 +11,9 @@ import { GeometryBatch } from '../props/batch';
 import { hash01 } from '../props/rules';
 import { beam, box } from '../structures/primitives';
 import { tunnelDims } from '../tunnel/sections';
+import { branchProfileAt } from '../network/branch';
 import type { RailSpec } from '../profile/types';
+import type { AttachDef } from '../network/types';
 
 export const SLEEPER = { len: 2.6, h: 0.2, w: 0.26, y: 0.07 } as const;
 /** rail: foot half width, head half width, height; the foot rests on the sleepers' top */
@@ -18,12 +21,50 @@ export const RAIL = { foot: 0.075, head: 0.045, h: 0.17, base: 0.17 } as const;
 export const RAIL_HEAD_Y = RAIL.base + RAIL.h;
 const MAST_SIDE_INSET = 0.3;
 const MAX_STATION_GAP = 3;
+/** length of the switch blades (Zungen), metres, and how far the open blade stands off its stock rail */
+export const BLADE_LEN_M = 8;
+export const BLADE_OPEN_M = 0.11;
+
+export type SwitchState = 'straight' | 'diverging';
+
+export interface RailContext {
+  /** position of the track switch with this id (see SwitchInfo.id) */
+  switchState(id: string): SwitchState;
+}
+
+const DEFAULT_CTX: RailContext = { switchState: () => 'straight' };
+
+/** a light signal to be drawn by the layer (its lamps change colour at run time, so they are not part of the merged mesh) */
+export interface SignalDef {
+  id: string;
+  roadId: string;
+  /** arc length on the road, and the direction of travel it governs along the road's increasing arc length (+1) or against it (-1) */
+  s: number;
+  dir: 1 | -1;
+  /** world position of the head's centre, and the head's frame: side = across the head, up, front = towards the approaching train */
+  pos: THREE.Vector3;
+  side: THREE.Vector3;
+  up: THREE.Vector3;
+  front: THREE.Vector3;
+  /** the aspect shown when nothing else decides (deterministic) */
+  aspect: 'red' | 'yellow' | 'green';
+}
 
 export interface RailBuild {
   batch: GeometryBatch;
   sleepers: number;
   masts: number;
   signals: number;
+  signalDefs: SignalDef[];
+  /** switches drawn in this chunk (parent or child side) */
+  switches: number;
+}
+
+/** a sampler whose lateral positions are plain metres from the centre line: a track keeps its gauge where the road's width is scaled (a branch growing out of a road) */
+class TrackSampler extends ChunkSampler {
+  override point(s: number, xp: number, y?: number): SurfacePoint {
+    return super.point(s, xp, y, false);
+  }
 }
 
 const sleeperGeometry = new THREE.BoxGeometry(SLEEPER.len, SLEEPER.h, SLEEPER.w);
@@ -42,16 +83,83 @@ export function signalAspect(seed: number, k: number): 'red' | 'yellow' | 'green
   return r < 0.3 ? 'red' : r < 0.48 ? 'yellow' : 'green';
 }
 
-export function buildChunkRail(rt: RoadRuntime, chunk: RoadChunk): RailBuild | null {
+/** Contact-wire stagger: zig-zag by ±0.2 m between consecutive masts so the pantograph wears evenly. */
+export function stagger(s: number, spacing: number, sFirst: number): number {
+  const q = (s - sFirst) / spacing;
+  const k = Math.floor(q);
+  const u = q - k;
+  const a = (k % 2 === 0 ? 1 : -1) * 0.2;
+  return a * (1 - u) + -a * u;
+}
+
+// ---- track switches ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * A track switch as one road sees it. Seen from the PARENT (the track the branch leaves) the branch track lies `offset(d)` away from the
+ * parent's axis at distance d from the nose (the toe of the switch); seen from the CHILD, the parent lies on its `inner` side. Both
+ * roads know the same zone, so the long sleepers, the blades, the frog and the check rails fit together exactly.
+ */
+interface SwitchZone {
+  id: string;
+  role: 'parent' | 'child';
+  attach: AttachDef;
+  state: SwitchState;
+  /** arc length on THIS road of the point at distance d from the nose */
+  sOf(d: number): number;
+  /** distance from the nose of arc length s on this road (may be outside [0, len]) */
+  dOf(s: number): number;
+  len: number;
+  /** lateral position of this road's own track in the zone (parent: the track the branch leaves; child: its single track) */
+  trackX: number;
+  /** parent: the side the branch leaves on (+1 right); child: the side of the parent seen from the child (+1 right) */
+  toward: 1 | -1;
+}
+
+const switchOffset = (a: AttachDef, d: number): number => branchProfileAt(a, d).offset - a.halfMain;
+
+function switchZones(rt: RoadRuntime, spec: RailSpec, ctx: RailContext): SwitchZone[] {
+  const out: SwitchZone[] = [];
+  const len = (a: AttachDef): number => a.len ?? 0;
+  // as a parent
+  for (const w of rt.switches) {
+    const a = w.attach;
+    if (a.s === undefined) continue;
+    const want = a.side * a.halfMain;
+    const trackX = spec.tracks.reduce((best, x) => (Math.abs(x - want) < Math.abs(best - want) ? x : best), spec.tracks[0]);
+    if (Math.abs(trackX - want) > 0.3) continue; // the branch does not leave one of this road's tracks
+    const nose = a.s, dir = a.dir;
+    out.push({ id: w.id, role: 'parent', attach: a, state: ctx.switchState(w.id), sOf: (d) => nose + dir * d, dOf: (s) => dir * (s - nose), len: len(a), trackX, toward: a.side });
+  }
+  // as a child
+  const L = rt.sampled.curve.length;
+  for (const which of ['attach', 'attachEnd'] as const) {
+    const a = rt.def[which];
+    if (!a || a.kind !== 'switch' || a.s === undefined) continue;
+    const merge = which === 'attachEnd';
+    const travelsPlus = (a.dir === 1) !== merge;
+    const id = `${rt.def.id}:${which}`;
+    out.push({
+      id, role: 'child', attach: a, state: ctx.switchState(id),
+      sOf: (d) => (merge ? L - d : d), dOf: (s) => (merge ? L - s : s), len: len(a), trackX: spec.tracks[0],
+      toward: (travelsPlus ? -a.side : a.side) as 1 | -1,
+    });
+  }
+  return out;
+}
+
+const inZone = (z: SwitchZone, s: number): boolean => { const d = z.dOf(s); return d >= -1e-6 && d <= z.len + 1e-6; };
+
+export function buildChunkRail(rt: RoadRuntime, chunk: RoadChunk, ctx: RailContext = DEFAULT_CTX): RailBuild | null {
   const spec = rt.profile.rail;
   if (!spec || chunk.state !== 'ready') return null;
-  const sampler = new ChunkSampler(rt, chunk);
-  const build: RailBuild = { batch: new GeometryBatch(), sleepers: 0, masts: 0, signals: 0 };
+  const sampler = new TrackSampler(rt, chunk);
+  const build: RailBuild = { batch: new GeometryBatch(), sleepers: 0, masts: 0, signals: 0, signalDefs: [], switches: 0 };
   const isLast = chunk.index === rt.chunks.length - 1;
   const { sMin, sMax } = sampler;
   const sFirst = rt.samples[0].s, sLast = rt.samples[rt.samples.length - 1].s;
   const owns = (s: number): boolean => s >= sMin && (s < sMax || (isLast && s <= sMax + 1e-9));
   const trimStart = rt.trim.start > 0, trimEnd = rt.trim.end > 0;
+  const zones = switchZones(rt, spec, ctx);
 
   const stations = (a: number, b: number, maxGap: number): number[] => {
     const set = new Set<number>([a, b]);
@@ -69,46 +177,97 @@ export function buildChunkRail(rt: RoadRuntime, chunk: RoadChunk): RailBuild | n
     return out;
   };
 
-  sleepersAndRails(rt, sampler, spec, build, owns, stations, sFirst, sLast);
-  if (spec.catenary) catenary(rt, sampler, spec, spec.catenary, build, owns, stations, sFirst);
-  if (spec.signals) signals(rt, sampler, spec, spec.signals, build, owns, sFirst, sLast, trimStart, trimEnd);
+  sleepers(rt, sampler, spec, build, owns, sFirst, sLast, zones);
+  rails(rt, sampler, spec, build, stations, zones);
+  for (const z of zones) switchParts(rt, sampler, spec, build, z, stations, owns);
+  if (spec.catenary) catenary(rt, sampler, spec, spec.catenary, build, owns, stations, sFirst, zones);
+  if (spec.signals) signals(rt, sampler, spec, spec.signals, build, owns, sFirst, sLast, trimStart, trimEnd, zones);
+  build.switches = zones.length;
   return build;
 }
 
-function sleepersAndRails(
+function sleepers(
   rt: RoadRuntime, sampler: ChunkSampler, spec: RailSpec, build: RailBuild,
-  owns: (s: number) => boolean, stations: (a: number, b: number, g: number) => number[], sFirst: number, sLast: number,
+  owns: (s: number) => boolean, sFirst: number, sLast: number, zones: SwitchZone[],
 ): void {
   const { sMin, sMax } = sampler;
-  const m = new THREE.Matrix4();
+  const m = new THREE.Matrix4(), sc = new THREE.Matrix4();
   for (const xt of spec.tracks) {
     const k0 = Math.ceil((sMin - sFirst) / spec.sleeperSpacing - 1e-9);
     for (let k = k0; ; k++) {
       const s = sFirst + k * spec.sleeperSpacing;
       if (s > sMax + 1e-9) break;
       if (!owns(s) || s < sFirst + 0.2 || s > sLast - 0.2) continue;
-      const p = sampler.point(s, xt, SLEEPER.y);
+      // inside a switch zone the child's track shares the parent's sleepers: they are longer, reaching under both tracks
+      let xc = xt, len: number = SLEEPER.len;
+      let skip = false;
+      for (const z of zones) {
+        if (!inZone(z, s)) continue;
+        if (z.role === 'child') { skip = true; break; }
+        if (Math.abs(z.trackX - xt) > 0.05) continue;
+        const delta = z.toward * switchOffset(z.attach, Math.max(0, z.dOf(s)));
+        const lo = Math.min(xt, xt + delta) - SLEEPER.len / 2, hi = Math.max(xt, xt + delta) + SLEEPER.len / 2;
+        xc = (lo + hi) / 2; len = hi - lo;
+      }
+      if (skip) continue;
+      const p = sampler.point(s, xc, SLEEPER.y);
       const f = frameOf(p);
       m.makeBasis(f.x, f.y, f.z).setPosition(p.pos);
+      if (len !== SLEEPER.len) m.multiply(sc.makeScale(len / SLEEPER.len, 1, 1));
       build.batch.addGeometry('sleeper', sleeperGeometry, m);
       build.sleepers++;
     }
-    // rails: one lofted prism per side, continuous across chunk borders (both chunks have the border station)
-    const st = stations(sMin, sMax, MAX_STATION_GAP);
-    for (const side of [-1, 1]) {
-      const rings = st.map((s) => {
-        const p = sampler.point(s, xt + (side * spec.gauge) / 2, RAIL.base);
-        const f = frameOf(p);
-        const at = (dx: number, dy: number): THREE.Vector3 => p.pos.clone().addScaledVector(f.x, dx).addScaledVector(f.y, dy);
-        return [at(-RAIL.foot, 0), at(RAIL.foot, 0), at(RAIL.head, RAIL.h), at(-RAIL.head, RAIL.h)];
-      });
-      loftPrism(build.batch.addRaw('rail_steel'), rings);
+  }
+}
+
+/** one rail as a lofted prism over [sa, sb]; `x` gives its lateral centre, `widthScale` thins the head (the tip of a blade) */
+function railRun(
+  sampler: ChunkSampler, build: RailBuild, stations: (a: number, b: number, g: number) => number[], sa: number, sb: number,
+  x: (s: number) => number, widthScale: (s: number) => number = () => 1, material = 'rail_steel',
+): void {
+  const a = Math.max(sa, sampler.sMin), b = Math.min(sb, sampler.sMax);
+  if (b - a < 1e-3) return;
+  const st = stations(a, b, MAX_STATION_GAP);
+  const rings = st.map((s) => {
+    const p = sampler.point(s, x(s), RAIL.base);
+    const f = frameOf(p);
+    const w = widthScale(s);
+    const at = (dx: number, dy: number): THREE.Vector3 => p.pos.clone().addScaledVector(f.x, dx).addScaledVector(f.y, dy);
+    return [at(-RAIL.foot * w, 0), at(RAIL.foot * w, 0), at(RAIL.head * w, RAIL.h), at(-RAIL.head * w, RAIL.h)];
+  });
+  loftPrism(build.batch.addRaw(material), rings);
+}
+
+function rails(
+  rt: RoadRuntime, sampler: ChunkSampler, spec: RailSpec, build: RailBuild,
+  stations: (a: number, b: number, g: number) => number[], zones: SwitchZone[],
+): void {
+  const { sMin, sMax } = sampler;
+  const g2 = spec.gauge / 2;
+  for (const xt of spec.tracks) {
+    for (const side of [-1, 1] as const) {
+      const xr = xt + side * g2;
+      // pieces of this rail that a switch replaces (the blade): the rail on the side the branch lies on (parent) / faces the parent (child)
+      const cuts: Array<{ sa: number; sb: number }> = [];
+      for (const z of zones) {
+        const mine = z.role === 'parent' ? Math.abs(z.trackX - xt) < 0.05 : true;
+        if (!mine || z.toward !== side) continue;
+        const a = z.sOf(0), b = z.sOf(BLADE_LEN_M);
+        cuts.push({ sa: Math.min(a, b), sb: Math.max(a, b) });
+      }
+      cuts.sort((p, q) => p.sa - q.sa);
+      let from = sMin;
+      for (const c of cuts) {
+        if (c.sa > from) railRun(sampler, build, stations, from, Math.min(c.sa, sMax), () => xr);
+        from = Math.max(from, c.sb);
+      }
+      if (from < sMax) railRun(sampler, build, stations, from, sMax, () => xr);
     }
   }
 }
 
 function loftPrism(raw: ReturnType<GeometryBatch['addRaw']>, rings: THREE.Vector3[][]): void {
-  // same as primitives.loft without caps, kept local so the rail needs no normals pass: flat shaded quads
+  // flat shaded quads between consecutive rings (no caps: neighbouring chunks continue the rail)
   for (let k = 0; k < rings.length - 1; k++) {
     const A = rings[k], B = rings[k + 1];
     const cA = A.reduce((a, p) => a.add(p), new THREE.Vector3()).multiplyScalar(1 / A.length);
@@ -126,18 +285,81 @@ function loftPrism(raw: ReturnType<GeometryBatch['addRaw']>, rings: THREE.Vector
   }
 }
 
-/** Contact-wire stagger: zig-zag by ±0.2 m between consecutive masts so the pantograph wears evenly. */
-export function stagger(s: number, spacing: number, sFirst: number): number {
-  const q = (s - sFirst) / spacing;
-  const k = Math.floor(q);
-  const u = q - k;
-  const a = (k % 2 === 0 ? 1 : -1) * 0.2;
-  return a * (1 - u) + -a * u;
+/** Blades, frog, check rails, switch rods and the lantern of one switch zone (the parts that are not plain rails). */
+function switchParts(
+  rt: RoadRuntime, sampler: ChunkSampler, spec: RailSpec, build: RailBuild, z: SwitchZone,
+  stations: (a: number, b: number, g: number) => number[], owns: (s: number) => boolean,
+): void {
+  const g2 = spec.gauge / 2;
+  const a = z.attach;
+  const open = (t: number): number => BLADE_OPEN_M * (1 - t);
+  // The blade of the rail toward the other track. Which blade is open depends on the position: the straight blade (parent) when the
+  // switch is set diverging, the curved blade (child) when it is set straight.
+  const parentOpen = z.state === 'diverging', childOpen = z.state === 'straight';
+  const isOpen = z.role === 'parent' ? parentOpen : childOpen;
+  const bladeX = (s: number): number => {
+    const d = Math.min(BLADE_LEN_M, Math.max(0, z.dOf(s)));
+    const t = d / BLADE_LEN_M;
+    // the straight blade (parent) opens towards the parent's axis, the curved blade (child) away from the parent
+    const shift = isOpen ? open(t) * (z.role === 'parent' ? -z.toward : -z.toward) : 0;
+    return z.trackX + z.toward * g2 + shift;
+  };
+  const bladeScale = (s: number): number => 0.3 + 0.7 * Math.min(1, Math.max(0, z.dOf(s) / BLADE_LEN_M));
+  const sa = Math.min(z.sOf(0), z.sOf(BLADE_LEN_M)), sb = Math.max(z.sOf(0), z.sOf(BLADE_LEN_M));
+  railRun(sampler, build, stations, sa, sb, bladeX, bladeScale);
+
+  // frog: where the child's inner rail crosses the parent's rail towards the branch (the track centres are one gauge apart there)
+  const gap = a.gap ?? 2;
+  const gauge = spec.gauge;
+  if (gap > gauge + 0.05) {
+    const taper = a.taper ?? 70, start = a.taperStart ?? (a.grow ?? 50) + (a.parallel ?? 0);
+    const df = start + Math.sqrt(gauge / gap) * taper;
+    const sf = z.sOf(df);
+    if (owns(sf) && z.role === 'parent') {
+      const p = sampler.point(sf, z.trackX + z.toward * g2, RAIL.base + 0.06);
+      const f = frameOf(p);
+      const slope = (2 * gap * Math.sqrt(gauge / gap)) / taper; // dΔ/dd at the frog: the angle between the tracks
+      const ang = Math.atan(slope) / 2 * z.toward;
+      const axisR = f.x.clone().multiplyScalar(Math.cos(ang)).addScaledVector(f.z, -Math.sin(ang)).normalize();
+      const axisZ = new THREE.Vector3().crossVectors(axisR, f.y).normalize();
+      box(build.batch.addRaw('rail_steel'), p.pos, axisR, f.y, axisZ, 0.17, 0.1, 1.15);
+      // wing rails: short rails beside the frog's nose on both routes
+      for (const sg of [-1, 1]) {
+        const wp = p.pos.clone().addScaledVector(f.x, sg * 0.3);
+        box(build.batch.addRaw('rail_steel'), wp, f.x, f.y, f.z, 0.045, 0.085, 1.6);
+      }
+    }
+    // check rails (Radlenker) opposite the frog, one on each route: a short rail just inside the opposite running rail
+    const lateral = z.trackX - z.toward * (g2 - 0.14);
+    railRun(sampler, build, stations, sf - 1.8, sf + 1.8, () => lateral);
+  }
+
+  // switch rods across the blades and the lantern at the toe (parent only: one per switch)
+  if (z.role === 'parent') {
+    for (const d of [1.6, 4.8]) {
+      const s = z.sOf(d);
+      if (!owns(s)) continue;
+      const p = sampler.point(s, z.trackX, SLEEPER.y + SLEEPER.h / 2 + 0.01);
+      const f = frameOf(p);
+      box(build.batch.addRaw('steel_dark'), p.pos, f.x, f.y, f.z, g2 + 0.05, 0.02, 0.03);
+    }
+    const s0 = z.sOf(-2);
+    if (owns(s0)) {
+      const p = sampler.point(s0, z.trackX + z.toward * (g2 + 1.3));
+      const f = frameOf(p);
+      const lamp = z.state === 'straight' ? 'rail_lamp_green' : 'rail_lamp_yellow';
+      box(build.batch.addRaw('steel_dark'), p.pos.clone().addScaledVector(f.y, 0.45), f.x, f.y, f.z, 0.03, 0.45, 0.03);
+      box(build.batch.addRaw('plastic_black'), p.pos.clone().addScaledVector(f.y, 0.95), f.x, f.y, f.z, 0.15, 0.15, 0.04);
+      box(build.batch.addRaw(lamp), p.pos.clone().addScaledVector(f.y, 0.95).addScaledVector(f.z, 0.05).addScaledVector(f.x, 0), f.x, f.y, f.z, 0.1, 0.1, 0.012);
+    }
+  }
 }
+
+// ---- overhead line --------------------------------------------------------------------------------------------------------------
 
 function catenary(
   rt: RoadRuntime, sampler: ChunkSampler, spec: RailSpec, cat: { height: number; spacing: number }, build: RailBuild,
-  owns: (s: number) => boolean, stations: (a: number, b: number, g: number) => number[], sFirst: number,
+  owns: (s: number) => boolean, stations: (a: number, b: number, g: number) => number[], sFirst: number, zones: SwitchZone[],
 ): void {
   const { sMin, sMax } = sampler;
   const wireY = RAIL_HEAD_Y + cat.height;
@@ -147,7 +369,11 @@ function catenary(
   };
   const core = rt.profile.coreHalfWidth;
   const xs = spec.tracks.slice().sort((a, b) => a - b);
-  const mastSides: Array<{ sg: -1 | 1; xt: number }> = xs.length === 1 ? [{ sg: 1, xt: xs[0] }] : [{ sg: -1, xt: xs[0] }, { sg: 1, xt: xs[xs.length - 1] }];
+  // masts stand beside the outermost tracks; a branch with its own track puts them on the side away from the track it leaves
+  const childZone = zones.find((z) => z.role === 'child');
+  const mastSides: Array<{ sg: -1 | 1; xt: number }> = childZone
+    ? [{ sg: (-childZone.toward) as -1 | 1, xt: xs[0] }]
+    : xs.length === 1 ? [{ sg: 1, xt: xs[0] }] : [{ sg: -1, xt: xs[0] }, { sg: 1, xt: xs[xs.length - 1] }];
   const dims = tunnelDims(rt);
   const isTunnel = (mode: string): boolean => mode === 'tunnel' || mode === 'gallery';
   const wireRaw = build.batch.addRaw('rail_wire');
@@ -160,6 +386,7 @@ function catenary(
     const s = sFirst + k * cat.spacing;
     if (s > sMax + 1e-9) break;
     if (!owns(s) || k === 0) continue;
+    if (childZone && inZone(childZone, s)) continue; // the parent's masts serve both tracks there
     for (const { sg, xt } of mastSides) {
       const base = sampler.point(s, sg * (core - MAST_SIDE_INSET));
       if (isTunnel(base.mode) || (base.mode !== 'road' && base.mode !== 'bridge')) continue;
@@ -175,6 +402,14 @@ function catenary(
       beam(steelRaw, arm(wireY + 0.35, xm), arm(wireY + 1.4, xt + sg * 1.6), 0.07, 0.07, UP); // brace
       beam(wireRaw, arm(wireY + 1.4, xt), arm(wireY + 0.04, xt), 0.03, 0.03, UP); // support of the contact wire (hanger)
       build.masts++;
+    }
+    // a middle track of three or more has no mast beside it: it hangs from a cross-span (portal) beam between two masts
+    if (xs.length > 2 && !childZone) {
+      for (const xt of xs.slice(1, -1)) {
+        const a = sampler.point(s, xs[0] - 0.8, wireY + 1.45).pos, b = sampler.point(s, xs[xs.length - 1] + 0.8, wireY + 1.45).pos;
+        beam(steelRaw, a, b, 0.08, 0.14, UP);
+        beam(wireRaw, sampler.point(s, xt, wireY + 1.4).pos, sampler.point(s, xt, wireY + 0.04).pos, 0.03, 0.03, UP);
+      }
     }
   }
 
@@ -209,14 +444,19 @@ function catenary(
   }
 }
 
+// ---- signals ----------------------------------------------------------------------------------------------------------------------
+
 function signals(
   rt: RoadRuntime, sampler: ChunkSampler, spec: RailSpec, sig: { spacing: number; start: number }, build: RailBuild,
-  owns: (s: number) => boolean, sFirst: number, sLast: number, trimStart: boolean, trimEnd: boolean,
+  owns: (s: number) => boolean, sFirst: number, sLast: number, trimStart: boolean, trimEnd: boolean, zones: SwitchZone[],
 ): void {
   const { sMin, sMax } = sampler;
   const core = rt.profile.coreHalfWidth;
   const xs = spec.tracks.slice().sort((a, b) => a - b);
-  const sides: Array<{ sg: -1 | 1; dir: 1 | -1 }> = xs.length === 1 ? [{ sg: 1, dir: 1 }] : [{ sg: 1, dir: 1 }, { sg: -1, dir: -1 }];
+  const childZone = zones.find((z) => z.role === 'child');
+  const sides: Array<{ sg: -1 | 1; dir: 1 | -1 }> = childZone
+    ? [{ sg: (-childZone.toward) as -1 | 1, dir: 1 }]
+    : xs.length === 1 ? [{ sg: 1, dir: 1 }] : [{ sg: 1, dir: 1 }, { sg: -1, dir: -1 }];
   const mastS = spec.catenary?.spacing ?? 0;
   const k0 = Math.max(0, Math.ceil((sMin - sFirst - sig.start) / sig.spacing - 1e-9));
   for (let k = k0; ; k++) {
@@ -226,6 +466,7 @@ function signals(
     if (mastS > 0) { const d = (((s - sFirst) % mastS) + mastS) % mastS; if (Math.min(d, mastS - d) < 4) s += 7; }
     if (!owns(s)) continue;
     if ((trimStart && s < sFirst + 20) || (trimEnd && s > sLast - 20)) continue;
+    if (zones.some((z) => inZone(z, s) || inZone(z, s + 25) || inZone(z, s - 25))) continue;
     for (const { sg, dir } of sides) {
       const p = sampler.point(s, sg * (core - 0.55));
       if (p.mode !== 'road' && p.mode !== 'bridge') continue;
@@ -236,13 +477,11 @@ function signals(
       const steel = build.batch.addRaw('steel_dark'), black = build.batch.addRaw('plastic_black');
       box(steel, at(1.9), side, f.y, front, 0.06, 2.0, 0.06);
       box(black, at(3.9, 0.05), side, f.y, front, 0.21, 0.58, 0.14);
-      const aspect = signalAspect(rt.seed, k * 2 + (sg > 0 ? 0 : 1));
-      const lamps: Array<['red' | 'yellow' | 'green', number]> = [['red', 4.25], ['yellow', 3.9], ['green', 3.55]];
-      for (const [name, y] of lamps) {
-        const lit = name === aspect;
-        const raw = build.batch.addRaw(lit ? `rail_lamp_${name}` : 'rail_lamp_off');
-        box(raw, at(y, 0.2), side, f.y, front, 0.075, 0.075, 0.015);
-      }
+      for (const y of [4.25, 3.9, 3.55]) box(build.batch.addRaw('rail_lamp_off'), at(y, 0.2), side, f.y, front, 0.075, 0.075, 0.012); // dark lamp housings
+      const id = `${rt.def.id}:${k}:${sg > 0 ? 'r' : 'l'}`;
+      build.signalDefs.push({
+        id, roadId: rt.def.id, s, dir, pos: at(0), side, up: f.y.clone(), front, aspect: signalAspect(rt.seed, k * 2 + (sg > 0 ? 0 : 1)),
+      });
       build.signals++;
     }
   }

@@ -266,7 +266,7 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
         const nameInput = h('input', { type: 'text', value: road.name, on: { input: () => editor.rename(nameInput.value), change: () => editor.model.breakCoalesce() } }) as HTMLInputElement;
         controls.push({ sync: () => { if (document.activeElement !== nameInput) nameInput.value = editor.selectedRoad?.name ?? ''; } });
         const info = h('div', { class: 'rse-hint' });
-        controls.push({ sync: () => { const i = editor.roadInfo(road.id); info.textContent = i ? `${i.length.toFixed(0)} m · Chunks ${i.ready}/${i.chunks}` : ''; } });
+        controls.push({ sync: () => { const i = editor.roadInfo(road.id); const w = editor.roadWarnings(road.id); info.textContent = (i ? `${i.length.toFixed(0)} m · Chunks ${i.ready}/${i.chunks}` : '') + (w.length ? ' · ⚠ ' + w.join(' · ⚠ ') : ''); } });
         inspector.append(
           h('div', { class: 'rse-h' }, 'Straße'),
           row('Name', nameInput),

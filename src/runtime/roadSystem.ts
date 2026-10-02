@@ -12,7 +12,7 @@ import { simToThree } from '../core/world';
 import type { NodeDef, RoadDef } from '../network/types';
 import { DEFAULT_CORNER_RADIUS_M } from '../network/types';
 import { armsByNode, normalizeNetwork, type Arm } from '../network/graph';
-import { openingsByRoad, type EdgeOpening } from '../network/attach';
+import { openingsByRoad, switchGeometryKey, switchesByParent, type EdgeOpening } from '../network/attach';
 import { layoutJunction, type ArmSpec, type Layout } from '../network/junction';
 import type { TerrainSource } from '../core/terrain';
 import type { ProfileData } from '../profile/types';
@@ -170,6 +170,7 @@ export class RoadSystem {
 
     // where branches leave or join, the edge stays open (no railing, no guardrail)
     const openings = openingsByRoad(net.roads, (id) => curves.get(id)?.length ?? 0);
+    const switches = switchesByParent(net.roads);
 
     // diff roads
     const oldById = new Map(this.roads.map((r) => [r.def.id, r]));
@@ -181,13 +182,15 @@ export class RoadSystem {
       const bridge = this.resolveBridge(def, prof);
       const old = oldById.get(def.id);
       const open = openings.get(def.id) ?? [];
-      const envKey = underSignature(def, net.roads) + '#' + openingsKey(open) + '#' + this.namedBridgeKey(def, prof);
+      const sw = switches.get(def.id) ?? [];
+      const envKey = underSignature(def, net.roads) + '#' + openingsKey(open) + '#' + this.namedBridgeKey(def, prof) + '#' + switchGeometryKey(sw);
       if (old && old.def === def && old.profile === prof && old.bridge === bridge && old.trim.start === trim.start && old.trim.end === trim.end && old.envKey === envKey && !this.stale.has(def.id)) {
         nextRoads.push(old);
         continue;
       }
       const rt = new RoadRuntime(def, this.terrain, prof, this.opts, trim, bridge);
       rt.openings = open;
+      rt.switches = sw;
       rt.envKey = envKey;
       rt.namedBridge = (name) => this.resolveBridge({ ...def, bridge: name, bridgeParams: undefined }, prof);
       nextRoads.push(rt);

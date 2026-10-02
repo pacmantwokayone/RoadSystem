@@ -13,6 +13,8 @@ import { PropLayer } from '../src/props/propLayer';
 import { IslandLayer } from '../src/props/islandLayer';
 import { TunnelLayer } from '../src/tunnel/tunnelLayer';
 import { RailLayer } from '../src/rail/railLayer';
+import { TrainLayer } from '../src/rail/train';
+import { CrossingLayer } from '../src/rail/crossing';
 import { TunnelSystem } from '../src/tunnel/tunnelSystem';
 import { SignalLayer } from '../src/props/signalLayer';
 import { BridgeLayer } from '../src/structures/bridgeLayer';
@@ -27,7 +29,7 @@ import { WaterLibrary } from '../src/water/styleLibrary';
 import { WaterSystem } from '../src/water/system';
 import { WaterLayer } from '../src/water/waterLayer';
 import { bridgePierObstacles } from '../src/water/bridgeObstacles';
-import { waterDemoHeight, waterDemoNetwork, waterDemoWaters, WATER_DEMO_VIEWS } from '../src/water/demoScene';
+import { waterDemoHeight, waterDemoNetwork, waterDemoWaters, WATER_DEMO_VIEWS, RAIL_DEMO_TRAINS } from '../src/water/demoScene';
 import { RoadEditor } from '../src/editor/roadEditor';
 import { mountEditorPanels } from '../src/editor/panels';
 import { PRECOMPILED } from './precompiled.gen';
@@ -98,6 +100,11 @@ const tunnelLayer = new TunnelLayer(roads, propLayer.materials);
 scene.add(tunnelLayer.group);
 const railLayer = new RailLayer(roads, propLayer.materials, { drawDistance: 1100 });
 scene.add(railLayer.group);
+const trainLayer = new TrainLayer(roads, railLayer);
+scene.add(trainLayer.group);
+const crossingLayer = new CrossingLayer(roads, trainLayer);
+scene.add(crossingLayer.group);
+let trainsRun = true, trainsAdded = false;
 const tunnelSystem = new TunnelSystem(roads, terrain);
 const bridgeLayer = new BridgeLayer(roads, materials, { drawDistance: 1800 });
 scene.add(bridgeLayer.group);
@@ -182,6 +189,30 @@ sunInput.addEventListener('input', () => setSun(Number(sunInput.value)));
 const partInput = $<HTMLInputElement>('particles');
 partInput.addEventListener('change', () => { if (waterLayer.particles) waterLayer.particles.group.visible = partInput.checked; });
 $('reset').addEventListener('click', () => { seedScene(); toast('Beispielszene geladen – deine Änderungen sind verworfen'); });
+const trainsInput = $<HTMLInputElement>('trains');
+trainsInput.addEventListener('change', () => { trainsRun = trainsInput.checked; trainLayer.group.visible = trainsInput.checked; });
+// track switches: one button each; the position is set at run time (and rebuilds the blades around it)
+function renderSwitches(): void {
+  const host = $('switch-list');
+  host.replaceChildren();
+  const list = railLayer.switches();
+  if (!list.length) { host.textContent = 'Keine Weichen im Netz.'; return; }
+  for (const w of list) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    const label = document.createElement('label');
+    label.textContent = roads.runtimes.find((r) => r.def.id === w.childId)?.def.name ?? w.childId;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn';
+    const text = (): string => (railLayer.switchState(w.id) === 'diverging' ? 'abzweigend' : 'geradeaus');
+    b.textContent = text();
+    b.addEventListener('click', () => { railLayer.setSwitch(w.id, railLayer.switchState(w.id) === 'straight' ? 'diverging' : 'straight'); b.textContent = text(); });
+    row.append(label, b);
+    host.append(row);
+  }
+}
+editor.model.onChange((e) => { if (e.type === 'changed' && trainsAdded) setTimeout(renderSwitches, 400); });
 const wireInput = $<HTMLInputElement>('wire');
 wireInput.addEventListener('change', () => { terrain.group.traverse((o) => { const m = (o as THREE.Mesh).material as THREE.Material & { wireframe?: boolean }; if ((o as THREE.Mesh).isMesh && m && 'wireframe' in m) m.wireframe = wireInput.checked; }); });
 const sideEl = $('side');
@@ -319,6 +350,9 @@ renderer.setAnimationLoop(() => {
   tunnelSystem.update();
   tunnelLayer.update(camera);
   railLayer.update(camera);
+  if (!trainsAdded && booted) { trainsAdded = true; for (const t of RAIL_DEMO_TRAINS) trainLayer.add(t); renderSwitches(); }
+  if (trainsRun) trainLayer.update(dt);
+  crossingLayer.update(dt);
   bridgeLayer.update(camera);
   signalLayer.update(performance.now() / 1000, camera);
   renderer.render(scene, camera);
@@ -329,4 +363,4 @@ renderer.setAnimationLoop(() => {
   }
 });
 
-(window as unknown as Record<string, unknown>).__water = { editor, waterSystem, waterLayer, terrain, roads, flyTo, setSun, dock, controls, camera };
+(window as unknown as Record<string, unknown>).__water = { trainLayer, crossingLayer, railLayer, editor, waterSystem, waterLayer, terrain, roads, flyTo, setSun, dock, controls, camera };

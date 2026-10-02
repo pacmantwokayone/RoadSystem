@@ -100,7 +100,7 @@
 </div>
 
 <aside id="side" aria-label="Ansichten und Anzeige">
-  <p class="lead">Ein Testgelände: Bergsee, Wildbach mit Stromschnellen, 390-Meter-Wasserfall mit Gumpen, Talfluss mit Brücke und Unterer See. Dazu ein Verkehrsfeld mit Kreisel, Ampelkreuzung, Dorf-T und Tunnel, ein Autobahnkreuz (Hochstrasse auf Stelzen, Rampen in der Luft) und eine Bahnstrecke mit Bahnhof, Fahrleitung, Signalen, Weiche, Bogenviadukt und zwei Tunneln. Alles lässt sich im Editor verändern oder neu zeichnen.</p>
+  <p class="lead">Ein Testgelände: Bergsee, Wildbach mit Stromschnellen, 390-Meter-Wasserfall mit Gumpen, Talfluss mit Brücke und Unterer See. Dazu ein Verkehrsfeld mit Kreisel, Ampelkreuzung, Dorf-T und Tunnel, ein Autobahnkreuz (Hochstrasse auf Stelzen, Rampen mit Spurzusatz) und eine Bahnstrecke mit Bahnhof, Fahrleitung, Blocksignalen, Weiche, Bahnübergang, Zügen, Bogenviadukt mit einem grossen Bogen über dem Fluss und zwei Tunneln. Alles lässt sich im Editor verändern, umbauen oder neu zeichnen.</p>
   <section>
     <h2 id="profile-title">Längsprofil</h2>
     <div id="profile"></div>
@@ -111,6 +111,11 @@
     <div class="row"><label for="particles">Partikel (Strömung, Gischt)</label><input id="particles" type="checkbox" checked></div>
     <div class="row"><label for="wire">Gelände als Gitter</label><input id="wire" type="checkbox"></div>
     <div class="row"><button class="btn" id="reset" type="button">Beispielszene neu laden</button></div>
+  </section>
+  <section>
+    <h2>Bahn</h2>
+    <div class="row"><label for="trains">Züge fahren</label><input id="trains" type="checkbox" checked></div>
+    <div id="switch-list" class="lead" style="margin-top:6px"></div>
   </section>
   <section>
     <h2>Bedienung</h2>
@@ -124,6 +129,7 @@
       <dt>Strg+Z</dt><dd>Rückgängig</dd>
     </dl>
     <p class="lead" style="margin-top:10px">Einen Wasserfall oder eine Stromschnelle machst du im Tab „Wasser“: Punkt wählen, „Abschnitt danach“ umstellen.</p>
+    <p class="lead" style="margin-top:6px">Ein Abzweig (Ausfahrt, Einmündung, Weiche) ist eine Strasse, die an einer anderen hängt: Werkzeug „Abzweig (B)“, auf die Hauptstrasse klicken, weiterzeichnen. Seine Längen (Spurzusatz, Weiche …) stehen im Inspector; er folgt der Hauptstrasse, wenn du sie verschiebst. „Vorlage“ setzt ein ganzes Autobahnkreuz, einen Kreisel oder einen Bahnhof.</p>
     <p class="lead" style="margin-top:6px">Einen Tunnel machst du im Tab „Straßen“: Strasse wählen, Punkte anklicken, Typ auf „Tunnel“ stellen. Ein Kreisel ist ein Ring aus Strassen mit Profil „kreisel“ (siehe Verkehrsfeld). Ein Gleis ist eine Strasse mit Profil „gleis“, „gleis_doppel“ oder „bahnhof“: Punkte anklicken, bei Bedarf Typ „Brücke“ oder „Tunnel“ — Schwellen, Schienen, Fahrleitung und Signale kommen vom Profil.</p>
     <p id="eval-note" hidden>Diese Umgebung sperrt das Ausführen von Code: Stile lassen sich wählen, aber nicht im Code-Tab bearbeiten.</p>
   </section>

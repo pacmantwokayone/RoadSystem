@@ -28,6 +28,7 @@ import { defaultAttach, type BranchKind } from '../network/branchDefaults';
 import type { AttachDef } from '../network/types';
 import { PRESET_SOURCES } from '../profile/presets';
 import { WaterEditor, type WaterEditorDeps } from './waterEditor';
+import { railWarnings } from '../rail/validate';
 import { defaultTemplateParams, newTemplateId, TEMPLATES, type TemplateKind } from './templates';
 
 export interface EditorHost {
@@ -699,6 +700,12 @@ export class RoadEditor {
   }
 
   get drafting(): boolean { return this.draft !== null; }
+
+  /** Plausibility findings for the road (railway curves and grades), for the inspector. */
+  roadWarnings(id: string): string[] {
+    const rt = this.system.runtimes.find((r) => r.def.id === id);
+    return rt ? railWarnings(rt).map((w) => w.text) : [];
+  }
 
   /** Length (m) and build progress of a road, for the inspector. */
   roadInfo(id: string): { length: number; chunks: number; ready: number } | undefined {

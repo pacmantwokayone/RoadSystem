@@ -489,25 +489,44 @@ gewöhnliche Kreuzung, die Zufahrten haben einen niedrigeren Rang und bekommen d
 Zufahrt, z. B. die Talstrasse mit Brücke); `findRoundabouts` erkennt Ringe im Netz wieder (zusammenhängende `kreisel`-Strassen auf einem Kreis). Die **Mittelinsel** (Bordstein, Rasen, Baum, Sträucher) macht der
 `IslandLayer` aus dem erkannten Ring — sie wird nicht gespeichert, sondern folgt dem Netz.
 
-**Abzweige** (`network/branch.ts`): ein Abzweig (Ausfahrt, Einfahrt, Rampe, Gleis-Weiche) braucht keine Kreuzung. `branchPoints({main, s, side, halfMain, halfBranch, taper, gap, tail, merge})` erzeugt die ersten Punkte
-einer neuen Strasse aus der Mittellinie der Hauptstrasse: sie beginnt als schmaler Streifen am Rand der Hauptfahrbahn (Querschnitt über `widthScale` auf ~0.1 verkleinert), wächst über den Taper (default 90 m) auf volle Breite
-und entfernt sich dabei seitlich (`halfMain + halfBranch·w + gap·u²`); die Höhe folgt der Hauptstrasse. Es ist ein Generator: wird die Hauptstrasse später verschoben, folgt der Abzweig nicht. Mit `merge` läuft die Punktliste
-zur Hauptstrasse hin (Einfahrt). Für Gleise: `halfMain` = Abstand des Hauptgleises von der Achse, `halfBranch = 0`, `gap` = Gleisabstand.
+**Abzweige als Objekte** (`network/branch.ts`, `attach.ts`, `branchDefaults.ts`): ein Abzweig (Ausfahrt, Einfahrt, Rampe, Gleis-Weiche) braucht keine Kreuzung und ist **bearbeitbar**: `RoadDef.attach` (Anfang der Strasse) und
+`RoadDef.attachEnd` (Ende) hängen eine Strasse an eine andere. Gespeichert wird die Beschreibung (`AttachDef`: Elternstrasse, Nase als SIM-Punkt, Seite, Richtung, `halfMain`/`halfBranch`, `grow` / `parallel` / `taper` / `gap`, `kind`
+`ramp|switch`, `state`), die ersten Punkte (der **Kopf**) berechnet `resolveAttachments` aus der Mittellinie der Elternstrasse – bei jeder Änderung der Elternstrasse neu (Teil von `normalizeNetwork`, also im Modell, im RoadSystem und
+beim Laden); Identität bleibt erhalten, wenn sich nichts ändert. Die Nase wird jedes Mal auf die Elternstrasse projiziert (so rutscht sie nicht, wenn Punkte eingefügt werden). Der Kopf besteht aus
+`grow` (Aufweitung von 0.1 auf volle Breite, dicht neben der Hauptfahrbahn), `parallel` (**Verzögerungs-/Beschleunigungsstreifen** in voller Breite, bündig), `taper` (die Lücke öffnet sich quadratisch) – für eine Weiche
+`taperStart: 0` (Breite und Abstand wachsen gemeinsam). Alles nach dem Kopf ist normal gezeichnet; die Punkte des Kopfes sind im Editor türkis und nicht ziehbar, der Startpunkt (violett) gleitet an der Elternstrasse entlang.
+Spuren eines Abzweigs sind **offen**: `RoadSystem` berechnet `RoadRuntime.openings` (Rand der Elternstrasse entlang des Kopfes + Innenseite des Zweigs); dort gibt es kein Brückengeländer, keine Leitplanke, keine Randpfosten –
+Fahrzeuge können abfahren. An der Nase hat ein angehängter Zweig kein Widerlager.
+**Editor:** Werkzeug „Abzweig (B)“ (Klick auf die Strasse, Ausfahrt/Einfahrt wählbar, danach normal weiterzeichnen), Inspector-Abschnitt „Ausfahrt/Einfahrt/Weiche“ mit allen Längen, „Abzweig lösen“, Punkte im Kopf sind gesperrt;
+Teilen einer Strasse hält die Anhängsel zusammen. **Vorlagen** (`editor/templates.ts`: Autobahnkreuz, Kreisel, Bahnhof mit Weiche) werden per Klick ins Gelände gesetzt und sind danach gewöhnliche Strassen.
 
 **Autobahnkreuz** (`network/interchange.ts`, `buildStackInterchange`): Autobahn A auf dem Boden, Autobahn B auf einer Hochstrasse darüber (Brücke `viadukt`, Zufahrtsdämme mit ≤ 4.5 % Steigung), vier Flyover-Rampen (je ein Quadrant),
-die in der Luft von B abzweigen, in einer Vierteldrehung sinken und am Boden in A einfädeln — alles gewöhnliche `RoadDef`s. Rampenabschnitte > 4.5 m über Grund sind Brücken, tiefere liegen auf einem Damm (`elev: 'fixed'`).
-**Pfeiler weichen aus** (`pierPositionsFor`, `sections.ts`): ein Pfeiler, der auf eine Strasse unter der Brücke fallen würde, rutscht zum nächsten freien Punkt (Spannweiten werden dadurch länger/kürzer); die Strasse unten wird über
-`RoadRuntime.siblings()` gefunden. **Grenze:** das Ausweichen wird beim Bau berechnet — wird nur die untere Strasse später verschoben, ziehen die Pfeiler nicht nach, bis die Brücke neu gebaut wird.
-Keine Verzögerungs-/Beschleunigungsspuren, keine Verflechtungsstrecken.
+jede Rampe `attach` an B (Ausfahrt mit Spurzusatz) und `attachEnd` an A (Einfahrt mit Beschleunigungsstreifen), dazwischen der Viertelkreis. **Pfeiler weichen aus** (`pierPositionsFor`): ein Pfeiler, der auf eine Strasse unter der
+Brücke fallen würde, rutscht zum nächsten freien Punkt. Das RoadSystem baut eine Brücke neu, wenn sich eine Strasse in ihrer Nähe ändert (`RoadRuntime.envKey`, Signatur der Nachbarstrassen), die Pfeiler ziehen also mit.
+Nicht gebaut: Verflechtungsstrecken.
+
+**Brücken pro Abschnitt** (`structures/sections.ts`, `RoadPoint.bridge`): ein Punkt kann „Brückentyp ab hier“ nennen; ein Lauf von Brückenpunkten teilt sich dort in Abschnitte mit eigenem Typ (`BridgeSection.bridge`). Die Abschnitte teilen
+den Grenz-Sample, dort steht ein durchgehender Pfeiler (kein Widerlager), die Fahrbahnplatte folgt pro Sample dem Typ (`RoadRuntime.bridgeOfSample`). Typ `grossbogen`: ein einziger Bogen über die ganze Länge des Abschnitts.
+**Bogen-Geometrie:** der Scheitel der Rippen berührt die Plattenunterseite; ist der Bogen zu niedrig dafür (hohes Viadukt), werden die Kämpfer angehoben und unter jeder Rippe wächst ein Pfeiler bis zum Kämpfer; Zwickelstützen sitzen
+gleichmässig verteilt (symmetrisch über jede Spannweite); Pfeiler stehen genau unter den Rippen.
 
 **Schienen** (`rail/`, Profile `gleis`, `gleis_doppel`, `bahnhof`): ein Gleis ist eine Strasse, deren Profil ein **Gleisbett** (Material `ballast`, Segmentart `ballast`/`walkway`/`platform` — keine Fahrbahnart, also kein Kreuzungs-Patch) und eine `RailSpec`
 (`R.profile(..).rail({tracks, gauge, sleeperSpacing}).catenary({height, spacing}).signals({spacing, start})`) hat. Das Gleisbett ist normale Strassenoberfläche — Geländeanpassung, Brücken, Tunnel und Pfeilerausweichen gelten ohne Sonderfall.
-Der `RailLayer` baut pro Chunk (aus absoluten Bogenlängen, damit Chunkgrenzen nichts verdoppeln): **Schwellen** (Betonbalken alle 0.6 m), **Schienen** (Prisma pro Seite, durchgehend), **Fahrleitung** (Masten mit Ausleger/Strebe
-alle 56 m aussen am Bett, Tragseil mit Durchhang, Fahrdraht 5.5 m über Schienenoberkante mit ±0.2 m Zickzack, Hänger; im Tunnel nur Fahrdraht mit Hängern an der Decke; keine Masten im Tunnel), **Lichtsignale** (rechts neben dem Gleis,
-dem Zug zugewandt, Zeigerbild statisch rot/gelb/grün aus dem Strassen-Seed). Eisenbahnbrücken: `defaultBridgeName` wählt bei Gleisprofilen `eisenbahnbruecke`; der Demo-Viadukt ist eine Bogenbrücke. Der Bahntunnel ist höher
-(`tunnelDims`: Wand 4.0 m + Bogen 2.9 m, damit der Fahrdraht Platz hat). Der Bahnhof hat Aussenbahnsteige (55 cm über SO) mit gelber Kante, Dächern (`platform_canopy`), Bänken und Leuchten als normale Prop-Regeln.
-**Grenzen:** keine Züge/Fahrzeuge; keine Bahnübergänge (Gleis kreuzt Strassen nur über/unter ihnen); die Weiche ist ein Abzweig-Generator ohne Herzstück/Zungen (zwei Gleise laufen auseinander); Masten nur an den Aussenseiten
-(Mittelgleise bei > 2 Gleisen ohne Mast); Signale statisch; Gleise brauchen grosse Radien (`smooth(140…200)`), enge Kurven werden nicht geprüft.
+Der `RailLayer` baut pro Chunk (aus absoluten Bogenlängen, damit Chunkgrenzen nichts verdoppeln; die Gleislage wird **nicht** mit der Strassenbreite skaliert): **Schwellen**, **Schienen**, **Fahrleitung** (Masten mit Ausleger/Strebe,
+Tragseil mit Durchhang, Fahrdraht mit Zickzack, Hänger; im Tunnel nur Fahrdraht mit Hängern an der Decke; bei mehr als zwei Gleisen ein Querträger für die Mittelgleise), **Lichtsignale** (Mast und Gehäuse im Chunk, die Lampen als eigene Objekte,
+damit die Zugsicherung sie schalten kann). Eisenbahnbrücken: `defaultBridgeName` wählt bei Gleisprofilen `eisenbahnbruecke`. Der Bahntunnel ist höher (`tunnelDims`). Der Bahnhof hat Aussenbahnsteige mit gelber Kante, Dächern, Bänken, Leuchten.
+**Weichen:** ein `attach` mit `kind: 'switch'`. Beide beteiligten Strassen kennen dieselbe **Weichenzone** (`SwitchZone`): das Stammgleis zeichnet längere **Weichenschwellen** unter beide Gleise (der Zweig lässt dort seine eigenen weg),
+**Zungen** (8 m, dünn auslaufend; die offene Zunge steht 11 cm vom Stockschienen ab – welche, hängt von der Stellung ab), **Herzstück** mit Flügelschienen am Kreuzungspunkt, **Radlenker** gegenüber, Spurstangen und die **Weichenlaterne**
+(grün = geradeaus, gelb = abzweigend). Die Stellung steht im Dokument (`attach.state`), lässt sich im Inspector ändern und zur Laufzeit per `RailLayer.setSwitch(id, state)` schalten (baut nur die Chunks um die Weiche neu).
+**Gleisnetz** (`rail/network.ts`): `RailNetwork` verbindet Gleisstrassen an ihren Enden, nimmt bei einer Weiche in abzweigender Stellung die Abzweigung (Spitzenbefahrung) und führt aus dem Zweig an der Nase zurück auf die Hauptstrecke;
+`advance(cursor, ds)` bewegt sich darauf, `pose()` liefert die Schienenlage.
+**Züge** (`rail/train.ts`): Lok + Wagen auf Drehgestellen, die dem Weg der Spitze folgen; Fahrer: bremst vor roten Signalen, kriecht bei Gelb, hält am Bahnsteig (Mitte des Zuges an Mitte des Bahnhofs, 14 s), hält Abstand, wendet am Streckenende.
+**Signale** zeigen **Blockabschnitte**: rot = ein Zug in den nächsten 350 m, gelb = in den nächsten 900 m (gleiche Richtung auf Doppelspur, beide Richtungen auf Einzelspur). **Bahnübergänge** (`rail/crossing.ts`) werden aus den gebauten
+Strassen gefunden (Strasse kreuzt Gleis im Gelände, Höhen ≤ 1.6 m auseinander); Andreaskreuze, rote Blinklichter und Schranken reagieren auf Züge (Blinken ab 320 m, Schranke 3.5 s später, öffnet 2 s nach dem Zug). Die Strasse muss dort auf
+Schienenhöhe liegen (fest autoriert). **Prüfung** (`rail/validate.ts`): enge Kurven (< 150 m Radius) und steile Rampen (> 4 %) erscheinen als Warnung im Inspector.
+**Grenzen:** keine Weichen zwischen mehr als zwei Gleisen mit eigener Weichenstrasse (eine Weiche zweigt vom äussersten Gleis ab); keine Doppelweichen/Kreuzungsweichen/Gleisverbindungen (Zweig und Hauptgleis laufen nach dem Zweig getrennt);
+die Zugsicherung kennt Blockabschnitte, aber keine Fahrstrassen oder Fahrpläne; ein Zug, der über einen Zweig in der Gegenrichtung zurückfährt, fährt auf dem Gleis der Gegenrichtung gegen den Verkehr (die Signale schützen ihn nicht);
+die Bahnübergänge haben keine Verkehrsteilnehmer (kein Strassenverkehr im Modul); Züge fahren nur dort, wo die Chunks gebaut sind (sonst auf der Soll-Höhe).
 
 **Tunnel** (`tunnel/`): Punkte mit Typ `tunnel` (oder `gallery`, bisher gleich behandelt) bilden einen Abschnitt, der exakt auf den Punkten beginnt und endet (`tunnelSections`). Die Röhre liegt im Berg und ist von aussen nicht sichtbar; man sieht
 (1) das **Portal** — eine Stirnwand aus Spalten zwischen dem abgegrabenen Boden und dem Hang dahinter, mit ausgeschnittenem Bogen, und (2) die **Auskleidung** (Bogenquerschnitt, Lichtbänder an der Decke), die man durch die Öffnung sieht. Dafür wird das

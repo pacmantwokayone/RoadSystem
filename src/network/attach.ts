@@ -104,3 +104,33 @@ export function openingsByRoad(roads: readonly RoadDef[], lengthOf: (id: string)
   }
   return out;
 }
+
+/** A track switch seen from the road it leaves (the parent): which child hangs on it, where, and in which position. */
+export interface SwitchInfo {
+  /** `${childId}:${which}` */
+  id: string;
+  childId: string;
+  which: 'attach' | 'attachEnd';
+  attach: AttachDef;
+}
+
+export const switchId = (childId: string, which: 'attach' | 'attachEnd'): string => `${childId}:${which}`;
+
+/** The track switches of a network, keyed by the PARENT road id. */
+export function switchesByParent(roads: readonly RoadDef[]): Map<string, SwitchInfo[]> {
+  const out = new Map<string, SwitchInfo[]>();
+  for (const r of roads) {
+    for (const which of ['attach', 'attachEnd'] as const) {
+      const a = r[which];
+      if (!a || a.kind !== 'switch' || a.s === undefined) continue;
+      const l = out.get(a.road) ?? [];
+      l.push({ id: switchId(r.id, which), childId: r.id, which, attach: a });
+      out.set(a.road, l);
+    }
+  }
+  return out;
+}
+
+/** geometry-relevant parts of a switch (everything but its position) as a string: the parent road is rebuilt when it changes */
+export const switchGeometryKey = (list: readonly SwitchInfo[]): string =>
+  list.map((w) => { const a = w.attach; return `${w.id}:${a.s?.toFixed(2)}:${a.len}:${a.side}:${a.dir}:${a.halfMain}:${a.halfBranch}:${a.gap ?? ''}:${a.taper ?? ''}:${a.grow ?? ''}:${a.taperStart ?? ''}`; }).join(',');

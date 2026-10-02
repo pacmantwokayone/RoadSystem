@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
-  MockStreamTerrain, RoadSystem, RoadDebugLayer, RoadMeshLayer, PropLayer, SignalLayer, BridgeLayer, BridgeLibrary, IslandLayer, TunnelLayer, RailLayer, TunnelSystem, GeometryBatch, placementMatrix, SIGN_CATALOG, ProfileLibrary, MaterialRegistry, MaterialLibrary,
+  MockStreamTerrain, RoadSystem, RoadDebugLayer, RoadMeshLayer, PropLayer, SignalLayer, BridgeLayer, BridgeLibrary, IslandLayer, TunnelLayer, RailLayer, TrainLayer, CrossingLayer, RAIL_DEMO_TRAINS, TunnelSystem, GeometryBatch, placementMatrix, SIGN_CATALOG, ProfileLibrary, MaterialRegistry, MaterialLibrary,
   StorageStore, MemoryStore, type RoadDef, type RoadStore,
   WaterLibrary, WaterSystem, WaterLayer, bridgePierObstacles, waterDemoHeight, waterDemoWaters, waterDemoNetwork, WATER_DEMO_VIEWS,
 } from 'roadsystem';
@@ -84,6 +84,12 @@ const tunnelLayer = new TunnelLayer(system, propLayer.materials);
 scene.add(tunnelLayer.group);
 const railLayer = new RailLayer(system, propLayer.materials, { drawDistance: Number(qp.get('propDist') ?? 1100) });
 scene.add(railLayer.group);
+const trainLayer = new TrainLayer(system, railLayer);
+trainLayer.group.visible = qp.get('trains') !== '0';
+scene.add(trainLayer.group);
+const crossingLayer = new CrossingLayer(system, trainLayer);
+scene.add(crossingLayer.group);
+let trainsAdded = false;
 const tunnelSystem = new TunnelSystem(system, terrain);
 const bridgeLayer = new BridgeLayer(system, materials, { drawDistance: Number(qp.get('propDist') ?? 1500) });
 scene.add(bridgeLayer.group);
@@ -290,18 +296,22 @@ addEventListener('resize', () => {
 let frame = 0;
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
+  const dt = Math.min(0.1, clock.getDelta());
   controls.update();
   propLayer.update(camera);
   islandLayer.update();
   tunnelSystem.update();
   tunnelLayer.update(camera);
   railLayer.update(camera);
+  if (!trainsAdded && frame > 60 && qp.get('water') === '1' && qp.get('trains') !== '0') { trainsAdded = true; for (const t of RAIL_DEMO_TRAINS) trainLayer.add(t); }
+  trainLayer.update(dt);
+  crossingLayer.update(dt);
   bridgeLayer.update(camera);
   signalLayer.update(frozenT ?? (performance.now() / 1000) * sigSpeed, camera);
   // the "player" is the orbit target; the terrain streams around it (sim z = -three z)
   terrain.update(controls.target.x, -controls.target.z);
   waterSystem.resync();
-  waterLayer.update(Math.min(0.1, clock.getDelta()), camera.position);
+  waterLayer.update(dt, camera.position);
   editor.update(); // resyncs the road system with an editing-sized budget
   if (debug.group.visible) debug.update();
   renderer.render(scene, camera);
@@ -317,6 +327,7 @@ renderer.setAnimationLoop(() => {
 });
 
 (window as unknown as Record<string, unknown>).__demo = {
+  trainLayer, crossingLayer, railLayer,
   renderer, scene, camera, waterSystem, waterLayer, waterLibrary, WATER_DEMO_VIEWS, editor, library, materials, materialLibrary, propLayer, signalLayer, bridgeLayer, bridgeLibrary,
   stats: () => ({ roads: system.stats(), tiles: terrain.loadStats(), meshes: meshLayer.meshCount, propMeshes: propLayer.meshCount, props: propLayer.allPlacements().length, count: editor.model.list.length, nodes: editor.model.nodeList.length, junctions: system.junctionStats(), dirty: editor.isDirty }),
   /** screen position (px) of a sim-space ground point, for scripted clicks */

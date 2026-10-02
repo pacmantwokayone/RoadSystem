@@ -18,7 +18,7 @@ import { flipZ } from '../core/world';
 import { profileHeightAt, profileHeightInside, type ProfilePoint, type ProfileData } from '../profile/types';
 import { DEFAULT_BRIDGE, type BridgeData } from '../structures/types';
 import type { End } from '../network/graph';
-import type { EdgeOpening } from '../network/attach';
+import type { EdgeOpening, SwitchInfo } from '../network/attach';
 
 export interface RoadRuntimeOptions {
   sample: SampleOptions;
@@ -137,6 +137,8 @@ export class RoadRuntime {
 
   /** stretches of the road's edge that stay open because a branch leaves or joins there (set by the RoadSystem, see attach.ts) */
   openings: readonly EdgeOpening[] = [];
+  /** track switches that leave this road (set by the RoadSystem) */
+  switches: readonly SwitchInfo[] = [];
   /** signature of the roads running under this road's bridges and of the openings: the road is rebuilt when it changes */
   envKey = '';
 
