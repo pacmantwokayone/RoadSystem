@@ -4,7 +4,7 @@
 
 import {
   CROSSWALK_MODES, DEFAULT_GREEN_S, JUNCTION_CONTROLS, ROAD_POINTS_MAX, ROADS_DOC_VERSION, SIGNAL_MODES,
-  type CrosswalkMode, type ElevationMode, type JunctionControl, type NodeDef, type SignalMode, type RoadDef, type RoadMode, type RoadPoint, type RoadsDocument,
+  type AttachDef, type CrosswalkMode, type ElevationMode, type JunctionControl, type NodeDef, type SignalMode, type RoadDef, type RoadMode, type RoadPoint, type RoadsDocument,
 } from './types';
 import { normalizeNetwork } from './graph';
 import { sanitizeWaters } from '../water/types';
@@ -27,6 +27,25 @@ export function sanitizePoint(raw: unknown): RoadPoint | null {
   const b = num(raw.banking);
   if (b !== undefined && b !== 0) p.banking = Math.min(0.5, Math.max(-0.5, b));
   return p;
+}
+
+export function sanitizeAttach(raw: unknown): AttachDef | undefined {
+  if (!isObj(raw) || typeof raw.road !== 'string' || !raw.road || !isObj(raw.at)) return undefined;
+  const ax = num(raw.at.x), az = num(raw.at.z), hm = num(raw.halfMain), hb = num(raw.halfBranch);
+  if (ax === undefined || az === undefined || hm === undefined || hb === undefined) return undefined;
+  const len = (v: unknown, lo: number, hi: number): number | undefined => { const n = num(v); return n === undefined ? undefined : Math.min(hi, Math.max(lo, n)); };
+  const a: AttachDef = {
+    road: raw.road, at: { x: ax, z: az }, side: raw.side === -1 ? -1 : 1, dir: raw.dir === -1 ? -1 : 1,
+    halfMain: Math.min(60, Math.max(0, hm)), halfBranch: Math.min(30, Math.max(0, hb)), head: Math.max(0, Math.min(500, Math.floor(num(raw.head) ?? 0))),
+  };
+  if (raw.kind === 'switch') a.kind = 'switch';
+  if (raw.state === 'diverging') a.state = 'diverging';
+  const set = (k: 'grow' | 'parallel' | 'taper' | 'gap' | 'taperStart' | 'dy', lo: number, hi: number): void => { const v = len(raw[k], lo, hi); if (v !== undefined) a[k] = v; };
+  set('grow', 0, 600); set('parallel', 0, 1000); set('taper', 0, 600); set('gap', 0, 60); set('taperStart', 0, 1000); set('dy', -5, 5);
+  const s = num(raw.s), l = num(raw.len);
+  if (s !== undefined) a.s = s;
+  if (l !== undefined) a.len = l;
+  return a;
 }
 
 export function sanitizeRoad(raw: unknown, fallbackId: string): RoadDef | null {
@@ -54,6 +73,10 @@ export function sanitizeRoad(raw: unknown, fallbackId: string): RoadDef | null {
   if (typeof raw.bridge === 'string' && raw.bridge) road.bridge = raw.bridge;
   const bp = cleanParams(raw.bridgeParams);
   if (bp) road.bridgeParams = bp;
+  const attach = sanitizeAttach(raw.attach);
+  if (attach) road.attach = attach;
+  const attachEnd = sanitizeAttach(raw.attachEnd);
+  if (attachEnd) road.attachEnd = attachEnd;
   return road;
 }
 
@@ -112,6 +135,8 @@ export function cloneRoad(r: RoadDef): RoadDef {
     ...(r.bridgeParams ? { bridgeParams: { ...r.bridgeParams } } : {}),
     ...(r.startNode ? { startNode: r.startNode } : {}),
     ...(r.endNode ? { endNode: r.endNode } : {}),
+    ...(r.attach ? { attach: { ...r.attach, at: { ...r.attach.at } } } : {}),
+    ...(r.attachEnd ? { attachEnd: { ...r.attachEnd, at: { ...r.attachEnd.at } } } : {}),
     points: r.points.map((p) => ({ ...p })),
   };
 }

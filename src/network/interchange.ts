@@ -1,10 +1,11 @@
 // A motorway interchange built from roads and branches (no junction patches): motorway A runs along the ground, motorway B crosses it high
 // above on a viaduct, and four flyover ramps — one in every quadrant — leave B in the air, swing through a quarter turn while sinking,
 // and join A on the ground. Where a ramp is still more than a few metres up it is a bridge on its own piers; where it comes down it lies on an
-// embankment. Everything is plain RoadDefs: edit, save and load like any other road.
+// embankment. Everything is plain RoadDefs: edit, save and load like any other road. The ramps are attached to the motorways (see attach.ts):
+// move a motorway and the exits, deceleration lanes and merges move with it.
 
-import type { RoadDef, RoadPoint } from './types';
-import { arcLengthNear, branchPoints } from './branch';
+import type { AttachDef, RoadDef, RoadPoint } from './types';
+import { arcLengthNear, branchPoints, headLength } from './branch';
 
 export interface InterchangeSpec {
   id: string;
@@ -28,6 +29,8 @@ export interface InterchangeSpec {
   bridge?: string;
   /** maximum grade of B's approach embankments (default 4.5 %) */
   grade?: number;
+  /** length of the deceleration / acceleration lane, metres (default 100) */
+  laneLength?: number;
 }
 
 export interface Interchange {
@@ -43,7 +46,9 @@ export function buildStackInterchange(spec: InterchangeSpec): Interchange {
   const LA = spec.lengthA ?? 900, LB = spec.lengthB ?? 1000;
   const main = spec.mainProfile ?? 'autobahn', ramp = spec.rampProfile ?? 'auffahrt';
   const hm = spec.halfMain ?? 11, hr = spec.halfRamp ?? 3;
-  const taper = 90, lat = hm + hr + 2; // lateral position of a ramp beside the motorway once it has separated
+  const lane = { grow: 50, parallel: spec.laneLength ?? 100, taper: 70, gap: 2 };
+  const L = headLength(lane);
+  const lat = hm + hr + lane.gap; // lateral position of a ramp beside the motorway once it has separated
   const grade = spec.grade ?? 0.045;
   const y0 = ground(cx, cz);
   const deckY = y0 + lift;
@@ -55,7 +60,7 @@ export function buildStackInterchange(spec: InterchangeSpec): Interchange {
   const A: RoadDef = { id: `${spec.id}-A`, name: 'Autobahn A', profile: main, points: aXs.map((x) => ({ x, y: gY(x, cz), z: cz })) };
 
   // B: south to north. Full height as far out as the ramps leave it, then down an embankment (and a first stretch of viaduct) to the ground
-  const dTop = lat + R + taper + 60;
+  const dTop = lat + R + L + 60;
   const climbLen = lift / grade;
   const heightAt = (d: number): number => Math.min(lift, Math.max(0, lift - (d - dTop) * grade));
   const ds = new Set<number>([0]);
@@ -84,10 +89,21 @@ export function buildStackInterchange(spec: InterchangeSpec): Interchange {
     const S = { x: cx + sx * lat, z: cz + sz * (lat + R) };
     const C = { x: S.x + sx * R, z: S.z };
     const E = { x: C.x, z: cz + sz * lat };
-    const sB = arcLengthNear(B, cx, cz + sz * (lat + R + taper));
-    const sA = arcLengthNear(A, E.x + sx * taper, cz);
-    const head = branchPoints({ main: B, s: sB, side: sx, dir: sz > 0 ? -1 : 1, halfMain: hm, halfBranch: hr, taper, tail: [] }).map((p) => ({ ...p, mode: 'bridge' as const }));
-    const tailA = branchPoints({ main: A, s: sA, side: (sz > 0 ? -1 : 1) as 1 | -1, dir: sx > 0 ? -1 : 1, halfMain: hm, halfBranch: hr, taper, tail: [], merge: true });
+    // the exit leaves B far out and runs towards the centre; the entry joins A far out and runs back from the centre
+    const exit: AttachDef = {
+      road: B.id, at: { x: cx, z: cz + sz * (lat + R + L) }, side: sx, dir: (sz > 0 ? -1 : 1) as 1 | -1,
+      halfMain: hm, halfBranch: hr, ...lane, head: 0,
+    };
+    const entry: AttachDef = {
+      road: A.id, at: { x: E.x + sx * L, z: cz }, side: (sz > 0 ? -1 : 1) as 1 | -1, dir: (sx > 0 ? -1 : 1) as 1 | -1,
+      halfMain: hm, halfBranch: hr, ...lane, head: 0,
+    };
+    const sB = arcLengthNear(B, exit.at.x, exit.at.z);
+    const sA = arcLengthNear(A, entry.at.x, entry.at.z);
+    const head = branchPoints({ main: B, s: sB, side: exit.side, dir: exit.dir, halfMain: hm, halfBranch: hr, ...lane, tail: [] });
+    const tailA = branchPoints({ main: A, s: sA, side: entry.side, dir: entry.dir, halfMain: hm, halfBranch: hr, ...lane, tail: [], merge: true });
+    exit.head = head.length;
+    entry.head = tailA.length;
     const yS = head[head.length - 1].y, yE = tailA[0].y;
     const steps = 14;
     const arc: RoadPoint[] = [];
@@ -102,7 +118,7 @@ export function buildStackInterchange(spec: InterchangeSpec): Interchange {
     }
     roads.push({
       id: `${spec.id}-ramp${sx > 0 ? 'E' : 'W'}${sz > 0 ? 'N' : 'S'}`, name: `Rampe ${sz > 0 ? 'Nord' : 'Süd'}-${sx > 0 ? 'Ost' : 'West'}`, profile: ramp,
-      ...(spec.bridge ? { bridge: spec.bridge } : {}), points: [...head, ...arc, ...tailA],
+      ...(spec.bridge ? { bridge: spec.bridge } : {}), points: [...head, ...arc, ...tailA], attach: exit, attachEnd: entry,
     });
   }
   return { roads, deckY };

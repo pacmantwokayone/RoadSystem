@@ -4,6 +4,7 @@
 // (the runtime diffs by identity).
 
 import type { NodeDef, RoadDef, RoadPoint } from './types';
+import { resolveAttachments } from './attach';
 
 export type End = 'start' | 'end';
 export interface Arm {
@@ -57,7 +58,7 @@ export function normalizeNetwork(roads: readonly RoadDef[], nodes: readonly Node
       return c;
     });
 
-  let out = clearRefs(roads, new Set(nodeMap.keys()));
+  let out = clearRefs(resolveAttachments(roads), new Set(nodeMap.keys()));
   // a node needs at least two road ends
   const arms = armsByNode(out);
   const keep = new Set([...nodeMap.keys()].filter((id) => (arms.get(id)?.length ?? 0) >= 2));

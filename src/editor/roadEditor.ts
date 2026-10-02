@@ -23,9 +23,12 @@ import { isFixedPoint, type NodeDef, type RoadDef, type RoadPoint } from '../net
 import { armsByNode, type End } from '../network/graph';
 import { RoadModel, type ModelEvent } from './model';
 import { nearestRoad, pointAtS, projectOnRoad } from './pathTools';
-import { connectEnd, defaultIds, dissolveNode, findConnectTarget, moveNode, setNodeRadius, setNodeSettings, type ConnectTarget, type NodeSettings } from './ops';
+import { connectEnd, defaultIds, detachRoad, dissolveNode, findConnectTarget, isHeadIndex, moveNode, setAttach, setNodeRadius, setNodeSettings, type AttachWhich, type ConnectTarget, type NodeSettings } from './ops';
+import { defaultAttach, type BranchKind } from '../network/branchDefaults';
+import type { AttachDef } from '../network/types';
 import { PRESET_SOURCES } from '../profile/presets';
 import { WaterEditor, type WaterEditorDeps } from './waterEditor';
+import { defaultTemplateParams, newTemplateId, TEMPLATES, type TemplateKind } from './templates';
 
 export interface EditorHost {
   scene: THREE.Scene;
@@ -62,7 +65,7 @@ export interface EditorDeps {
   water?: WaterEditorDeps;
 }
 
-export type Tool = 'select' | 'draw' | 'river' | 'lake';
+export type Tool = 'select' | 'draw' | 'branch' | 'place' | 'river' | 'lake';
 export type StatusKind = 'info' | 'ok' | 'error';
 
 export interface EditorState {
@@ -72,6 +75,10 @@ export interface EditorState {
   /** selected junction */
   nodeId?: string;
   activeProfile: string;
+  /** what the branch tool creates: an exit (the new road starts at the main road) or an entry (it ends there) */
+  branchKind: BranchKind;
+  /** what the place tool drops on the next click */
+  template: { kind: TemplateKind; params: Record<string, number> };
   status: { text: string; kind: StatusKind };
   libraryDirty: boolean;
 }
@@ -103,7 +110,7 @@ export class RoadEditor {
   private libraryRevision: number | undefined;
   private handleMeshes: THREE.Mesh[] = [];
   private handlesDirty = true;
-  private drag: { pointer: number; kind: 'point' | 'node'; index: number; nodeId?: string } | null = null;
+  private drag: { pointer: number; kind: 'point' | 'node' | 'nose'; index: number; nodeId?: string; which?: AttachWhich } | null = null;
   private nodeMeshes: THREE.Mesh[] = [];
   private down: { x: number; y: number; t: number; shift: boolean } | null = null;
   private readonly raycaster = new THREE.Raycaster();
@@ -124,6 +131,8 @@ export class RoadEditor {
     this.state = {
       tool: 'select',
       activeProfile: this.library.names().includes('hauptstrasse') ? 'hauptstrasse' : this.library.names()[0],
+      branchKind: 'exit',
+      template: { kind: 'interchange', params: defaultTemplateParams('interchange') },
       status: { text: '', kind: 'info' },
       libraryDirty: false,
     };
@@ -332,6 +341,7 @@ export class RoadEditor {
   setPointAttr(index: number, patch: Partial<RoadPoint>): void {
     const id = this.state.roadId;
     if (!id) return;
+    if (this.headBlocked(id, index)) return;
     const key = `attr:${id}:${index}:${Object.keys(patch).join(',')}`;
     this.model.edit(id, 'Punkt ändern', (d) => {
       const p = d.points[index];
@@ -342,6 +352,99 @@ export class RoadEditor {
         else (p as unknown as Record<string, unknown>)[k] = v;
       }
     }, key);
+  }
+
+  /** Points of a computed head follow the parent road; say so instead of silently ignoring the edit. */
+  private headBlocked(id: string, index: number): boolean {
+    const r = this.model.get(id);
+    if (!r || !isHeadIndex(r, index)) return false;
+    this.setStatus('Dieser Punkt folgt der Hauptstrasse. Den Abzweig verschiebst du am Startpunkt, Form und Längen stehen im Inspector.', 'info');
+    return true;
+  }
+
+  /** Does the selected road hang on another road (exit / entry)? */
+  attachOf(road: RoadDef | undefined): Array<{ which: AttachWhich; attach: AttachDef; parent: RoadDef | undefined }> {
+    if (!road) return [];
+    const out: Array<{ which: AttachWhich; attach: AttachDef; parent: RoadDef | undefined }> = [];
+    if (road.attach) out.push({ which: 'attach', attach: road.attach, parent: this.model.get(road.attach.road) });
+    if (road.attachEnd) out.push({ which: 'attachEnd', attach: road.attachEnd, parent: this.model.get(road.attachEnd.road) });
+    return out;
+  }
+
+  setAttach(which: AttachWhich, patch: Partial<Omit<AttachDef, 'road' | 'head' | 's' | 'len'>>): void {
+    const id = this.state.roadId;
+    if (id) this.model.transact('Abzweig ändern', (d) => setAttach(d, id, which, patch), `attach:${id}:${which}:${Object.keys(patch).join(',')}`);
+  }
+
+  detachSelected(which: AttachWhich): void {
+    const id = this.state.roadId;
+    if (!id) return;
+    this.model.transact('Abzweig lösen', (d) => detachRoad(d, id, which));
+    this.setStatus('Abzweig gelöst: die Punkte bleiben, folgen der Hauptstrasse aber nicht mehr', 'ok');
+  }
+
+  /** Is point `index` of the selected road part of a computed head? */
+  isHead(index: number): boolean {
+    const r = this.selectedRoad;
+    return !!r && isHeadIndex(r, index);
+  }
+
+  /** Is point `index` the nose of an attachment (the one end you may drag along the parent)? */
+  noseOf(road: RoadDef, index: number): AttachWhich | undefined {
+    if (road.attach && index === 0) return 'attach';
+    if (road.attachEnd && index === road.points.length - 1) return 'attachEnd';
+    return undefined;
+  }
+
+  /**
+   * Branch tool: a click on a road starts a new road that leaves it (or, as `entry`, joins it). The head is computed from the parent;
+   * the user then clicks the rest of the new road as usual (draw tool) and finishes with Enter.
+   */
+  private startBranch(hit: THREE.Vector3): void {
+    const near = nearestRoad(this.system.runtimes.map((r) => ({ def: r.def, sampled: r.sampled })), hit.x, hit.z, PICK_ROAD_M * 1.5);
+    const rt = near ? this.system.runtimes.find((r) => r.def.id === near.id) : undefined;
+    if (!near || !rt) { this.setStatus('Auf eine Strasse klicken, von der der Abzweig wegführen soll.', 'error'); return; }
+    const parent = this.model.get(near.id) ?? rt.def;
+    const pr = projectOnRoad(rt.sampled, hit.x, hit.z);
+    const q = rt.sampled.curve.pointAt(pr.s);
+    const t = rt.sampled.curve.tangentAt(pr.s);
+    // THREE space: right = (−t.z, 0, t.x). The side the click lies on decides where the branch goes.
+    const side: 1 | -1 = (hit.x - q.x) * -t.z + (hit.z - q.z) * t.x >= 0 ? 1 : -1;
+    const parentProfile = this.library.resolve(parent.profile, parent.params);
+    let profile = this.state.activeProfile;
+    if (parentProfile.rail && !this.library.resolve(profile).rail) profile = this.library.has('gleis') ? 'gleis' : profile;
+    const childProfile = this.library.resolve(profile);
+    const attach = defaultAttach({ parent, parentProfile, childProfile, at: { x: q.x, z: -q.z }, side, kind: this.state.branchKind });
+    const id = `road-${Date.now().toString(36)}${Math.floor(Math.random() * 1296).toString(36)}`;
+    this.draft = { id, name: `${parentProfile.rail ? 'Weiche' : this.state.branchKind === 'exit' ? 'Ausfahrt' : 'Einfahrt'} ${this.model.list.length + 1}`, profile, points: [], ...(this.state.branchKind === 'exit' ? { attach } : { attachEnd: attach }) };
+    this.state.tool = 'draw';
+    this.host.domElement.style.cursor = 'crosshair';
+    this.setStatus(this.state.branchKind === 'exit' ? 'Abzweig gesetzt – jetzt die Strasse weiter zeichnen (Klicks), Enter = fertig' : 'Einmündung gesetzt – jetzt die Strasse vom freien Ende her zeichnen, Enter = fertig', 'info');
+    this.emit();
+  }
+
+  setTemplate(kind: TemplateKind): void {
+    this.state.template = { kind, params: defaultTemplateParams(kind) };
+    this.emit();
+  }
+
+  setTemplateParam(key: string, value: number): void {
+    this.state.template.params[key] = value;
+  }
+
+  /** Drops the current template at a ground position (THREE space hit): one undo step. */
+  placeTemplate(hit: THREE.Vector3): void {
+    const { kind, params } = this.state.template;
+    const def = TEMPLATES[kind];
+    const ground = (x: number, z: number): number => this.terrain?.heightAt(x, z) ?? hit.y;
+    const built = def.build({ x: hit.x, z: -hit.z, ground, uid: newTemplateId(), params, library: this.library });
+    this.model.transact(`${def.label} einfügen`, (d) => {
+      for (const r of built.roads) d.setRoad(cloneRoad(r));
+      for (const n of built.nodes) d.setNode({ ...n });
+    });
+    this.selectRoad(built.roads[0]?.id);
+    this.setTool('select');
+    this.setStatus(`${def.label} eingefügt – alle Teile sind normale Strassen und lassen sich einzeln ändern`, 'ok');
   }
 
   /** Is point `index` of road `id` an end that hangs on a junction? */
@@ -358,6 +461,7 @@ export class RoadEditor {
       this.setStatus('Dieser Endpunkt hängt an einer Kreuzung – Kreuzung zuerst auflösen.', 'error');
       return;
     }
+    if (this.headBlocked(id, idx)) return;
     this.model.edit(id, 'Punkt löschen', (d) => { d.points.splice(idx, 1); });
     this.state.pointIndex = undefined;
     this.handlesDirty = true;
@@ -410,6 +514,9 @@ export class RoadEditor {
     if (!rt) return;
     const pr = projectOnRoad(rt.sampled, x, zThree);
     const { index, point } = pointAtS(rt.def, rt.sampled, pr.s, groundY);
+    // inside a computed head there is nothing to insert into: it follows the parent
+    const a = rt.def.attach, b = rt.def.attachEnd;
+    if ((a && index < a.head) || (b && index > rt.def.points.length - b.head)) { this.setStatus('Hier folgt die Strasse der Hauptstrasse – Punkte lassen sich nur ausserhalb des Abzweigs einfügen.', 'error'); return; }
     this.model.edit(roadId, 'Punkt einfügen', (d) => { d.points.splice(index, 0, point); });
     this.selectPoint(index);
   }
@@ -548,7 +655,8 @@ export class RoadEditor {
 
   private updateDraft(): void {
     if (!this.draft) return;
-    if (this.draft.points.length >= 2) this.system.upsertRoad(cloneRoad(this.draft));
+    const need = this.draft.attach || this.draft.attachEnd ? 1 : 2; // an attached road has its head already
+    if (this.draft.points.length >= need) this.system.upsertRoad(cloneRoad(this.draft));
     else this.system.removeRoad(this.draft.id);
     this.state.roadId = this.draft.id;
     this.handlesDirty = true;
@@ -559,11 +667,11 @@ export class RoadEditor {
     const d = this.draft;
     if (!d) return;
     this.draft = null;
-    if (d.points.length < 2) { this.system.removeRoad(d.id); this.state.roadId = undefined; this.handlesDirty = true; this.emit(); return; }
-    // connect both ends to whatever they were drawn onto — all in ONE undo step (road, node, split)
+    if (d.points.length < (d.attach || d.attachEnd ? 1 : 2)) { this.system.removeRoad(d.id); this.state.roadId = undefined; this.handlesDirty = true; this.emit(); return; }
+    // connect both ends to whatever they were drawn onto — all in ONE undo step (road, node, split). An attached end is joined to its parent already.
     const first = d.points[0], last = d.points[d.points.length - 1];
-    const tStart = this.targetAt(first.x, -first.z, d.id);
-    const tEnd = this.targetAt(last.x, -last.z, d.id);
+    const tStart = d.attach ? undefined : this.targetAt(first.x, -first.z, d.id);
+    const tEnd = d.attachEnd ? undefined : this.targetAt(last.x, -last.z, d.id);
     let connected = 0;
     this.model.transact('Straße zeichnen', (draft) => {
       draft.setRoad(cloneRoad(d));
@@ -624,7 +732,7 @@ export class RoadEditor {
     const rt = this.system.runtimes.find((r) => r.def.id === road.id);
     road.points.forEach((p, k) => {
       const mode = p.mode ?? 'road';
-      const color = k === this.state.pointIndex ? 0xff9a2e : this.isNodeEnd(road.id, k) ? 0xffc400 : mode === 'bridge' ? 0x5fb0ff : mode === 'tunnel' ? 0xc08cff : mode === 'gallery' ? 0xe0c060 : isFixedPoint(p) ? 0x8ff0b0 : 0xffffff;
+      const color = k === this.state.pointIndex ? 0xff9a2e : this.noseOf(road, k) ? 0xff5ad0 : isHeadIndex(road, k) ? 0x3ad6c8 : this.isNodeEnd(road.id, k) ? 0xffc400 : mode === 'bridge' ? 0x5fb0ff : mode === 'tunnel' ? 0xc08cff : mode === 'gallery' ? 0xe0c060 : isFixedPoint(p) ? 0x8ff0b0 : 0xffffff;
       const mat = new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.95 });
       const m = new THREE.Mesh(this.sphere, mat);
       const y = rt ? rt.pointDesignY(k) : p.y;
@@ -696,7 +804,16 @@ export class RoadEditor {
         const r = id ? this.selectedRoad : undefined;
         // an end that hangs on a junction drags the junction (and with it every road that meets there)
         const attached = r && id && this.isNodeEnd(id, idx) ? (idx === 0 ? r.startNode : r.endNode) : undefined;
-        if (attached) {
+        const nose = r ? this.noseOf(r, idx) : undefined;
+        if (nose && id) {
+          // the nose of a branch slides along its parent road
+          this.drag = { pointer: e.pointerId, kind: 'nose', index: idx, which: nose };
+          this.model.holdCoalesce(`nose:${id}`);
+        } else if (r && isHeadIndex(r, idx)) {
+          this.selectPoint(idx); // a computed point: selectable, but it follows the parent
+          e.stopImmediatePropagation();
+          return;
+        } else if (attached) {
           this.drag = { pointer: e.pointerId, kind: 'node', index: idx, nodeId: attached };
           this.model.holdCoalesce(`dragnode:${attached}`);
         } else {
@@ -717,6 +834,11 @@ export class RoadEditor {
     on(el, 'pointermove', (e) => {
       if (!this.drag || e.pointerId !== this.drag.pointer) return;
       const hit = this.host.pickGround(e);
+      if (hit && this.drag.kind === 'nose' && this.drag.which && this.state.roadId) {
+        const rid = this.state.roadId, which = this.drag.which;
+        this.model.transact('Abzweig verschieben', (d) => { d.editRoad(rid, (r) => { const a = r[which]; if (a) a.at = { x: hit.x, z: -hit.z }; }); }, `nose:${rid}`);
+        return;
+      }
       if (hit && this.drag.kind === 'node' && this.drag.nodeId) {
         const nid = this.drag.nodeId;
         this.model.transact('Kreuzung verschieben', (d) => moveNode(d, nid, hit.x, hit.y, -hit.z), `dragnode:${nid}`);
@@ -793,6 +915,8 @@ export class RoadEditor {
   }
 
   private click(e: PointerEvent, shift: boolean): void {
+    if (this.state.tool === 'branch') { const h = this.pickSurface(e); if (h) this.startBranch(h); return; }
+    if (this.state.tool === 'place') { const h = this.host.pickGround(e); if (h) this.placeTemplate(h); return; }
     const hit = this.state.tool === 'draw' ? this.host.pickGround(e) : this.pickSurface(e);
     if (!hit) return;
     if (this.state.tool === 'draw') {
@@ -823,12 +947,14 @@ export class RoadEditor {
       if (e.key === 'Delete' || e.key === 'Backspace' || e.key === 'Escape') return;
     }
     if (e.key === 'd' || e.key === 'D') { this.setTool(this.state.tool === 'draw' ? 'select' : 'draw'); return; }
+    if ((e.key === 'b' || e.key === 'B') && !this.draft) { this.setTool(this.state.tool === 'branch' ? 'select' : 'branch'); return; }
     if (this.state.tool === 'draw') {
       if (e.key === 'Enter') this.finishDraft();
       else if (e.key === 'Escape') { this.cancelDraft(); this.setTool('select'); }
       else if (e.key === 'Backspace' && this.draft) { this.draft.points.pop(); this.updateDraft(); }
       return;
     }
+    if (this.state.tool === 'branch' || this.state.tool === 'place') { if (e.key === 'Escape') this.setTool('select'); return; }
     if (e.key === 'Delete' || e.key === 'Backspace') { this.state.nodeId ? this.dissolveSelectedNode() : this.deleteSelectedPoint(); }
     else if (e.key === 'Escape') { this.state.pointIndex !== undefined ? this.selectPoint(undefined) : this.state.nodeId ? this.selectNode(undefined) : this.selectRoad(undefined); }
   }

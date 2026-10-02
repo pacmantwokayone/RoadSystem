@@ -57,6 +57,39 @@ export const DEFAULT_GREEN_S = 20;
 
 export const DEFAULT_CORNER_RADIUS_M = 6;
 
+/**
+ * A branch of another road: the head of the road (its first points for `RoadDef.attach`, its last points for `RoadDef.attachEnd`) is
+ * computed from the parent road, see attach.ts. Everything between the heads is authored as usual.
+ */
+export interface AttachDef {
+  /** parent road id */
+  road: string;
+  /** the nose (SIM): re-projected onto the parent's centre line each time, so it keeps its place when the parent is edited */
+  at: { x: number; z: number };
+  /** side of the parent, seen along its increasing arc length: 1 = right */
+  side: 1 | -1;
+  /** the head runs along +s (1) or -s (-1) of the parent from the nose */
+  dir: 1 | -1;
+  /** 'switch' = a track turnout (drawn with blades and frog by the RailLayer) */
+  kind?: 'ramp' | 'switch';
+  /** centre-to-centre distance when adjacent: half carriageway of the parent + half of the branch; for a switch the lateral offset of the track it leaves */
+  halfMain: number;
+  halfBranch: number;
+  grow?: number;
+  parallel?: number;
+  taper?: number;
+  gap?: number;
+  taperStart?: number;
+  dy?: number;
+  /** switch position */
+  state?: 'straight' | 'diverging';
+  /** number of head points currently at the start (for `attachEnd`: the end) of `points` — kept by resolveAttachments */
+  head: number;
+  /** derived by resolveAttachments: arc length of the nose on the parent, and the head's length */
+  s?: number;
+  len?: number;
+}
+
 export interface RoadDef {
   id: string;
   name: string;
@@ -71,6 +104,10 @@ export interface RoadDef {
   /** junction at the first / last point (NodeDef.id) */
   startNode?: string;
   endNode?: string;
+  /** this road branches off another (exit, ramp, switch): its first points follow the parent */
+  attach?: AttachDef;
+  /** this road joins another (entry, merge): its last points follow the parent */
+  attachEnd?: AttachDef;
 }
 
 import type { LakeDef, RiverDef } from '../water/types';

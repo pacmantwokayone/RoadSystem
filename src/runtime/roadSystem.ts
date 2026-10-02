@@ -12,6 +12,7 @@ import { simToThree } from '../core/world';
 import type { NodeDef, RoadDef } from '../network/types';
 import { DEFAULT_CORNER_RADIUS_M } from '../network/types';
 import { armsByNode, normalizeNetwork, type Arm } from '../network/graph';
+import { openingsByRoad, type EdgeOpening } from '../network/attach';
 import { layoutJunction, type ArmSpec, type Layout } from '../network/junction';
 import type { TerrainSource } from '../core/terrain';
 import type { ProfileData } from '../profile/types';
@@ -43,6 +44,40 @@ function curveOf(def: RoadDef): PathCurve {
   if (!c) { c = new PathCurve(def.points.map((p) => simToThree(p.x, p.y, p.z))); curveCache.set(def, c); }
   return c;
 }
+
+/** bounding box of a road's points (cached per immutable definition) */
+const boxCache = new WeakMap<RoadDef, { x0: number; x1: number; z0: number; z1: number }>();
+function boxOf(def: RoadDef): { x0: number; x1: number; z0: number; z1: number } {
+  let b = boxCache.get(def);
+  if (!b) {
+    b = { x0: Infinity, x1: -Infinity, z0: Infinity, z1: -Infinity };
+    for (const p of def.points) { b.x0 = Math.min(b.x0, p.x); b.x1 = Math.max(b.x1, p.x); b.z0 = Math.min(b.z0, p.z); b.z1 = Math.max(b.z1, p.z); }
+    boxCache.set(def, b);
+  }
+  return b;
+}
+
+const sigCache = new WeakMap<RoadDef, string>();
+function pointsSig(def: RoadDef): string {
+  let s = sigCache.get(def);
+  if (s === undefined) { s = def.id + ':' + def.points.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)},${p.mode ?? ''}`).join(';'); sigCache.set(def, s); }
+  return s;
+}
+
+/** what a bridging road depends on besides its own definition: the other roads close to it (piers keep clear of roads below) */
+function underSignature(def: RoadDef, all: readonly RoadDef[]): string {
+  if (!def.points.some((p) => p.mode === 'bridge')) return '';
+  const b = boxOf(def), m = 60;
+  const near: string[] = [];
+  for (const o of all) {
+    if (o === def || o.id === def.id) continue;
+    const q = boxOf(o);
+    if (q.x0 - m <= b.x1 && q.x1 + m >= b.x0 && q.z0 - m <= b.z1 && q.z1 + m >= b.z0) near.push(pointsSig(o));
+  }
+  return near.join('|');
+}
+
+const openingsKey = (list: readonly EdgeOpening[]): string => list.map((o) => `${o.side}:${o.s0.toFixed(2)}:${o.s1.toFixed(2)}`).join(',');
 
 /** a road end may never eat more than this fraction of the road */
 const MAX_TRIM_FRACTION = 0.45;
@@ -133,6 +168,9 @@ export class RoadSystem {
       });
     }
 
+    // where branches leave or join, the edge stays open (no railing, no guardrail)
+    const openings = openingsByRoad(net.roads, (id) => curves.get(id)?.length ?? 0);
+
     // diff roads
     const oldById = new Map(this.roads.map((r) => [r.def.id, r]));
     const nextRoads: RoadRuntime[] = [];
@@ -142,11 +180,15 @@ export class RoadSystem {
       const prof = profiles.get(def.id)!;
       const bridge = this.resolveBridge(def, prof);
       const old = oldById.get(def.id);
-      if (old && old.def === def && old.profile === prof && old.bridge === bridge && old.trim.start === trim.start && old.trim.end === trim.end && !this.stale.has(def.id)) {
+      const open = openings.get(def.id) ?? [];
+      const envKey = underSignature(def, net.roads) + '#' + openingsKey(open);
+      if (old && old.def === def && old.profile === prof && old.bridge === bridge && old.trim.start === trim.start && old.trim.end === trim.end && old.envKey === envKey && !this.stale.has(def.id)) {
         nextRoads.push(old);
         continue;
       }
       const rt = new RoadRuntime(def, this.terrain, prof, this.opts, trim, bridge);
+      rt.openings = open;
+      rt.envKey = envKey;
       nextRoads.push(rt);
       if (old) replaced.push([old, rt]);
     }

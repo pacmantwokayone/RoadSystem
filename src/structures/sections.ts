@@ -79,8 +79,8 @@ export function pierPositionsFor(rt: RoadRuntime, section: Pick<BridgeSection, '
   const base = pierPositions(section, maxSpan);
   const sibs = rt.siblings();
   if (sibs.length <= 1) return base;
-  const sig = sibs.map((o) => `${o.def.id}:${o.def.points.length}:${o.samples.length}`).join(',');
-  const key = `${section.s0.toFixed(2)}:${section.s1.toFixed(2)}:${maxSpan}:${sig}`;
+  // no sibling signature: the RoadSystem rebuilds a bridging road (a new runtime) whenever a road close to it changes
+  const key = `${section.s0.toFixed(2)}:${section.s1.toFixed(2)}:${maxSpan}`;
   let byKey = pierCache.get(rt);
   if (!byKey) { byKey = new Map(); pierCache.set(rt, byKey); }
   const hit = byKey.get(key);

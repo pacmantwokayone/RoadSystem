@@ -115,35 +115,54 @@ function girders(c: Ctx, a: number, b: number, sec: BridgeSection): void {
   }
 }
 
+/** the parts of [a, b] that lie outside the given gaps */
+function outsideRuns(a: number, b: number, gaps: ReadonlyArray<{ s0: number; s1: number }>): Array<[number, number]> {
+  let runs: Array<[number, number]> = [[a, b]];
+  for (const g of gaps) {
+    const next: Array<[number, number]> = [];
+    for (const [x, y] of runs) {
+      if (g.s1 <= x || g.s0 >= y) { next.push([x, y]); continue; }
+      if (g.s0 > x) next.push([x, g.s0]);
+      if (g.s1 < y) next.push([g.s1, y]);
+    }
+    runs = next;
+  }
+  return runs.filter(([x, y]) => y - x > 1e-3);
+}
+
 function railing(c: Ctx, a: number, b: number, sec: BridgeSection): void {
   const r = c.bridge.railing;
   if (r.type === 'none' || c.bridge.truss) return;
   const raw = c.raw(r.material);
-  const st = c.stations(a, b);
-  const capStart = a <= sec.s0 + 1e-6, capEnd = b >= sec.s1 - 1e-6;
   const yb = c.yEdge;
   for (const side of [-1, 1]) {
+    // where a branch leaves or joins, the edge is open: no railing, so vehicles can drive off
+    const gaps = c.rt.openings.filter((o) => o.side === side);
     const x = side * (c.halfW - 0.18);
-    const strip = (xc: number, hw: number, y0: number, y1: number): void => {
-      loft(raw, st.map((s) => [c.P(s, xc - hw, y0), c.P(s, xc + hw, y0), c.P(s, xc + hw, y1), c.P(s, xc - hw, y1)]), { capStart, capEnd });
-    };
-    if (r.type === 'parapet') {
-      strip(x, 0.15, yb, yb + r.height);
-    } else if (r.type === 'steel') {
-      for (const f of [0.38, 0.7, 1.0]) strip(x, 0.03, yb + r.height * f - 0.03, yb + r.height * f + 0.03);
-      strip(x, 0.12, yb, yb + 0.14); // kerb
-    } else {
-      for (const f of [0.55, 0.95]) strip(x, 0.045, yb + r.height * f - 0.05, yb + r.height * f + 0.05);
-    }
-    // posts
-    if (r.type !== 'parapet') {
-      const spacing = r.type === 'steel' ? 2 : 1.6;
-      const w = r.type === 'steel' ? 0.04 : 0.07;
-      for (let s = Math.ceil((a + 1e-6) / spacing) * spacing; s <= b + 1e-6; s += spacing) {
-        if (s > b - 1e-6 && !c.owns(s)) continue;
-        if (!(s >= a - 1e-6 && s <= b + 1e-6) || !(c.owns(s) || s < c.sMax - 1e-6)) continue;
-        const ax = c.axes(s);
-        box(raw, c.P(s, x, yb + r.height / 2), ax.right, UP, ax.tan, w, r.height / 2, w);
+    for (const [ra, rb] of outsideRuns(a, b, gaps)) {
+      const st = c.stations(ra, rb);
+      const capStart = ra <= sec.s0 + 1e-6 || ra > a + 1e-6, capEnd = rb >= sec.s1 - 1e-6 || rb < b - 1e-6;
+      const strip = (xc: number, hw: number, y0: number, y1: number): void => {
+        loft(raw, st.map((s) => [c.P(s, xc - hw, y0), c.P(s, xc + hw, y0), c.P(s, xc + hw, y1), c.P(s, xc - hw, y1)]), { capStart, capEnd });
+      };
+      if (r.type === 'parapet') {
+        strip(x, 0.15, yb, yb + r.height);
+      } else if (r.type === 'steel') {
+        for (const f of [0.38, 0.7, 1.0]) strip(x, 0.03, yb + r.height * f - 0.03, yb + r.height * f + 0.03);
+        strip(x, 0.12, yb, yb + 0.14); // kerb
+      } else {
+        for (const f of [0.55, 0.95]) strip(x, 0.045, yb + r.height * f - 0.05, yb + r.height * f + 0.05);
+      }
+      // posts
+      if (r.type !== 'parapet') {
+        const spacing = r.type === 'steel' ? 2 : 1.6;
+        const w = r.type === 'steel' ? 0.04 : 0.07;
+        for (let s = Math.ceil((ra + 1e-6) / spacing) * spacing; s <= rb + 1e-6; s += spacing) {
+          if (s > rb - 1e-6 && !c.owns(s)) continue;
+          if (!(s >= ra - 1e-6 && s <= rb + 1e-6) || !(c.owns(s) || s < c.sMax - 1e-6)) continue;
+          const ax = c.axes(s);
+          box(raw, c.P(s, x, yb + r.height / 2), ax.right, UP, ax.tan, w, r.height / 2, w);
+        }
       }
     }
   }
@@ -383,8 +402,9 @@ export function buildChunkBridge(rt: RoadRuntime, chunk: RoadChunk): BridgeBuild
     lamps(c, sec);
     piers(c, sec);
     arch(c, sec);
-    if (sec.startsAtRoad || sec.i0 === 0) { abutment(c, sec.s0, true); wing(c, sec, true); }
-    if (sec.endsAtRoad || sec.i1 === rt.samples.length - 1) { abutment(c, sec.s1, false); wing(c, sec, false); }
+    // a branch that is attached to a road rests on it at its nose: no abutment there
+    if (sec.i0 === 0 ? !rt.def.attach : sec.startsAtRoad) { abutment(c, sec.s0, true); wing(c, sec, true); }
+    if (sec.i1 === rt.samples.length - 1 ? !rt.def.attachEnd : sec.endsAtRoad) { abutment(c, sec.s1, false); wing(c, sec, false); }
   }
   return { batch: c.batch, placements: c.placements, complete: c.complete };
 }

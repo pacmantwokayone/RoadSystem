@@ -4,7 +4,10 @@
 import type { ProfileLibrary } from '../profile/library';
 import type { MaterialRegistry } from '../surface/materials';
 import type { ParamDef } from '../profile/types';
-import type { RoadPoint } from '../network/types';
+import type { AttachDef, RoadPoint } from '../network/types';
+import type { AttachWhich } from './ops';
+import type { BranchKind } from '../network/branchDefaults';
+import { TEMPLATES, type TemplateKind } from './templates';
 import { createCodeEditor, type CodeEditorHandle } from './codeEditor';
 import { h, injectEditorCss } from './dom';
 import { drawProfile } from './profilePreview';
@@ -28,6 +31,8 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
     h('button', { class: cls, title, on: { click: onClick } }, label);
   const bSelect = btn('Wählen', 'Straßen und Punkte wählen/verschieben', () => editor.setTool('select'));
   const bDraw = btn('Zeichnen (D)', 'Klicks aufs Gelände setzen Punkte · Enter fertig', () => editor.setTool(editor.state.tool === 'draw' ? 'select' : 'draw'));
+  const bBranch = btn('Abzweig (B)', 'Abzweig: auf eine Strasse klicken, von der die neue Strasse abzweigt (Ausfahrt, Einmündung, Weiche) · danach zeichnen', () => editor.setTool(editor.state.tool === 'branch' ? 'select' : 'branch'));
+  const bPlace = btn('Vorlage', 'Autobahnkreuz, Kreisel oder Bahnhof ins Gelände setzen (Einstellungen im Tab „Strassen“)', () => editor.setTool(editor.state.tool === 'place' ? 'select' : 'place'));
   const water = editor.water;
   const bRiver = btn('Fluss (R)', 'Fluss zeichnen: Klicks setzen Punkte · Enter fertig', () => editor.setTool(editor.state.tool === 'river' ? 'select' : 'river'));
   const bLake = btn('See (L)', 'See zeichnen: Klicks setzen die Uferpunkte · Enter schliesst', () => editor.setTool(editor.state.tool === 'lake' ? 'select' : 'lake'));
@@ -36,7 +41,7 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
   const bSave = btn('Speichern', 'Auf dem Server speichern (Strg+S)', () => void editor.save(), 'primary');
   const bReload = btn('Neu laden', 'Vom Server neu laden', () => void editor.reload());
   const status = h('div', { class: 'rse-status' });
-  const bar = h('div', { class: 'rse-bar' }, bSelect, bDraw, ...(water ? [bRiver, bLake] : []), h('span', { class: 'rse-sep' }), bUndo, bRedo, h('span', { class: 'rse-sep' }), bSave, bReload, status);
+  const bar = h('div', { class: 'rse-bar' }, bSelect, bDraw, bBranch, bPlace, ...(water ? [bRiver, bLake] : []), h('span', { class: 'rse-sep' }), bUndo, bRedo, h('span', { class: 'rse-sep' }), bSave, bReload, status);
 
   // ---- tabs ----
   const tabRoads = h('button', { class: 'on' }, 'Straßen');
@@ -88,8 +93,29 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
   const nodeListEl = h('div', { class: 'rse-list' });
   const inspector = h('div');
   const activeProfileSel = h('select', { on: { change: () => { editor.state.activeProfile = activeProfileSel.value; } } });
+  // branch tool + templates
+  const kindSel = h('select', { on: { change: () => { editor.state.branchKind = kindSel.value as BranchKind; } } },
+    h('option', { value: 'exit' }, 'Ausfahrt: Strasse beginnt an der Hauptstrasse'), h('option', { value: 'entry' }, 'Einfahrt: Strasse endet an der Hauptstrasse')) as HTMLSelectElement;
+  const tplSel = h('select', { on: { change: () => { editor.setTemplate(tplSel.value as TemplateKind); renderTemplate(); } } },
+    ...(Object.keys(TEMPLATES) as TemplateKind[]).map((k) => h('option', { value: k }, TEMPLATES[k].label))) as HTMLSelectElement;
+  const tplParams = h('div');
+  const tplHint = h('div', { class: 'rse-hint' });
+  function renderTemplate(): void {
+    const t = editor.state.template, def = TEMPLATES[t.kind];
+    tplSel.value = t.kind;
+    tplHint.textContent = def.hint;
+    tplParams.replaceChildren(...def.params.map((p) => {
+      const input = h('input', { type: 'number', min: p.min, max: p.max, step: p.step, value: String(t.params[p.key] ?? p.default),
+        on: { input: () => { const v = Number(input.value); if (Number.isFinite(v)) editor.setTemplateParam(p.key, Math.min(p.max, Math.max(p.min, v))); } } }) as HTMLInputElement;
+      return row(p.label, input);
+    }));
+  }
   roadsBody.append(
     h('div', { class: 'rse-row two' }, h('span', {}, 'Neue Straßen'), activeProfileSel),
+    h('div', { class: 'rse-row two' }, h('span', {}, 'Abzweig-Werkzeug'), kindSel),
+    h('div', { class: 'rse-h' }, 'Vorlage einfügen'),
+    h('div', { class: 'rse-row two' }, h('span', {}, 'Vorlage'), tplSel), tplParams, tplHint,
+    h('div', { class: 'rse-actions' }, h('button', { on: { click: () => editor.setTool('place') } }, 'Platzieren (Klick ins Gelände)')),
     h('div', { class: 'rse-h' }, 'Straßen'), listEl, nodeListEl, inspector,
   );
 
@@ -100,6 +126,7 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
 
   const row = (label: string, input: HTMLElement, value?: HTMLElement): HTMLElement =>
     h('div', { class: value ? 'rse-row' : 'rse-row two' }, h('span', {}, label), input, value);
+  renderTemplate();
 
   function numberRow(label: string, get: () => number, set: (v: number) => void, opts: { min?: number; max?: number; step?: number; slider?: boolean; fmt?: (v: number) => string } = {}): HTMLElement {
     const fmt = opts.fmt ?? ((v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')));
@@ -134,6 +161,31 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
     }
     if (def.type === 'enum') return selectRow(label, (def.options ?? []).map((o) => [o, o] as [string, string]), () => String(cur()), (v) => setValue(v));
     return numberRow(label, () => Number(cur()), (v) => setValue(v), { min: def.min, max: def.max, step: def.step ?? (def.type === 'int' ? 1 : 'any' as unknown as number), slider: def.min !== undefined && def.max !== undefined });
+  }
+
+  function attachSection(which: AttachWhich, a: AttachDef, parentName: string): HTMLElement {
+    const cur = (): AttachDef => editor.selectedRoad?.[which] ?? a;
+    const isSwitch = a.kind === 'switch';
+    const title = isSwitch ? (which === 'attach' ? 'Weiche (Anfang)' : 'Weiche (Ende)') : which === 'attach' ? 'Ausfahrt (Anfang)' : 'Einfahrt (Ende)';
+    const box = h('div', {}, h('div', { class: 'rse-h' }, title));
+    box.append(
+      row('Hauptstrasse', h('span', { class: 'rse-val', style: { textAlign: 'left' } }, parentName)),
+      selectRow('Art', [['ramp', 'Rampe / Ausfahrt'], ['switch', 'Weiche (Gleis)']], () => cur().kind ?? 'ramp', (v) => editor.setAttach(which, { kind: v as 'ramp' | 'switch' })),
+      selectRow('Seite', [['1', 'rechts'], ['-1', 'links']], () => String(cur().side), (v) => editor.setAttach(which, { side: v === '-1' ? -1 : 1 })),
+      selectRow('Richtung', [['1', 'mit der Strasse (+)'], ['-1', 'gegen die Strasse (−)']], () => String(cur().dir), (v) => editor.setAttach(which, { dir: v === '-1' ? -1 : 1 })),
+      numberRow('Aufweitung (m)', () => cur().grow ?? 50, (v) => editor.setAttach(which, { grow: v }), { min: 0, max: 200, step: 5, slider: true, fmt: (v) => v.toFixed(0) }),
+      numberRow('Spurzusatz (m)', () => cur().parallel ?? 0, (v) => editor.setAttach(which, { parallel: v }), { min: 0, max: 400, step: 10, slider: true, fmt: (v) => v.toFixed(0) }),
+      numberRow('Ausscheidung (m)', () => cur().taper ?? 70, (v) => editor.setAttach(which, { taper: v }), { min: 10, max: 300, step: 5, slider: true, fmt: (v) => v.toFixed(0) }),
+      numberRow('Abstand danach (m)', () => cur().gap ?? 2, (v) => editor.setAttach(which, { gap: v }), { min: 0, max: 12, step: 0.25, slider: true, fmt: (v) => v.toFixed(2) }),
+      numberRow('Achsabstand (m)', () => cur().halfMain, (v) => editor.setAttach(which, { halfMain: v }), { min: 0, max: 30, step: 0.25, fmt: (v) => v.toFixed(2) }),
+      numberRow('Halbbreite Zweig (m)', () => cur().halfBranch, (v) => editor.setAttach(which, { halfBranch: v }), { min: 0, max: 15, step: 0.25, fmt: (v) => v.toFixed(2) }),
+    );
+    if (isSwitch) box.append(selectRow('Stellung', [['straight', 'geradeaus'], ['diverging', 'abzweigend']], () => cur().state ?? 'straight', (v) => editor.setAttach(which, { state: v === 'diverging' ? 'diverging' : undefined })));
+    box.append(
+      h('div', { class: 'rse-hint' }, 'Der Anfang folgt der Hauptstrasse (türkise Punkte). Den Startpunkt (violett) ziehst du an der Hauptstrasse entlang.'),
+      h('div', { class: 'rse-actions' }, h('button', { on: { click: () => editor.detachSelected(which) } }, 'Abzweig lösen')),
+    );
+    return box;
   }
 
   function pointSection(road: NonNullable<typeof editor.selectedRoad>, idx: number): HTMLElement {
@@ -186,7 +238,7 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
     const node = editor.selectedNode;
     const ik = node
       ? `node|${node.id}|${node.control ?? ''}|${editor.nodeArms(node.id).map((a) => a.roadId + a.end).join(',')}`
-      : road ? `${road.id}|${road.profile}|${editor.state.pointIndex}|${road.points.length}|${library.names().join(',')}|${road.bridge ?? ''}|${road.points.some((p) => p.mode === 'bridge')}|${editor.bridgeLibrary?.names().join(',') ?? ''}` : 'none';
+      : road ? `${road.id}|${road.profile}|${editor.state.pointIndex}|${road.points.length}|${library.names().join(',')}|${road.bridge ?? ''}|${road.attach ? 'a' + road.attach.kind : ''}${road.attachEnd ? 'e' + road.attachEnd.kind : ''}|${road.points.some((p) => p.mode === 'bridge')}|${editor.bridgeLibrary?.names().join(',') ?? ''}` : 'none';
     if (ik !== inspKey) {
       inspKey = ik;
       controls = [];
@@ -221,6 +273,7 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
         );
         const schema = library.getSchema(road.profile);
         for (const [k, def] of Object.entries(schema)) inspector.append(paramRow(k, def));
+        for (const { which, attach, parent } of editor.attachOf(road)) inspector.append(attachSection(which, attach, parent?.name ?? attach.road));
         const bl = editor.bridgeLibrary;
         if (bl && road.points.some((p) => p.mode === 'bridge')) {
           const auto = editor.effectiveBridgeName({ ...road, bridge: undefined });
@@ -637,6 +690,8 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
   function renderBar(): void {
     bSelect.classList.toggle('on', editor.state.tool === 'select');
     bDraw.classList.toggle('on', editor.state.tool === 'draw');
+    bBranch.classList.toggle('on', editor.state.tool === 'branch');
+    bPlace.classList.toggle('on', editor.state.tool === 'place');
     bRiver.classList.toggle('on', editor.state.tool === 'river');
     bLake.classList.toggle('on', editor.state.tool === 'lake');
     bUndo.disabled = !editor.model.canUndo;
@@ -644,7 +699,7 @@ export function mountEditorPanels(editor: RoadEditor, root: HTMLElement, deps: P
     bUndo.title = `Rückgängig${editor.model.undoLabel ? `: ${editor.model.undoLabel}` : ''} (Strg+Z)`;
     bRedo.title = `Wiederholen${editor.model.redoLabel ? `: ${editor.model.redoLabel}` : ''} (Strg+Y)`;
     bSave.textContent = editor.isDirty ? 'Speichern ●' : 'Speichern';
-    status.textContent = editor.state.status.text || (['draw', 'river', 'lake'].includes(editor.state.tool) ? 'Klick setzt Punkte · Enter = fertig · ⌫ = letzter Punkt · Esc = abbrechen' : '');
+    status.textContent = editor.state.status.text || (['draw', 'river', 'lake'].includes(editor.state.tool) ? 'Klick setzt Punkte · Enter = fertig · ⌫ = letzter Punkt · Esc = abbrechen' : editor.state.tool === 'branch' ? 'Auf die Strasse klicken, von der der Abzweig wegführt · Esc = abbrechen' : editor.state.tool === 'place' ? 'Klick setzt die Vorlage · Esc = abbrechen' : '');
     status.className = `rse-status${editor.state.status.kind === 'error' ? ' err' : editor.state.status.kind === 'ok' ? ' ok' : ''}`;
   }
 

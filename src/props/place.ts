@@ -145,6 +145,7 @@ function placeScatter(rt: RoadRuntime, chunk: RoadChunk, sampler: ChunkSampler, 
       const lateral = sg * (core + rule.offset) + (rule.jitterLateral ? (rnd(2) * 2 - 1) * rule.jitterLateral : 0);
       const p = sampler.point(s, lateral);
       if (!rule.modes.includes(p.mode)) continue;
+      if (rule.offset < 3 && rt.isOpen(sg, s)) continue; // posts and delineators at the edge stay out of a branch opening
       if (rule.when) {
         const ctx = makeContext(rt, sampler, s, side, lateral, k, ri, p);
         if (!guard(() => rule.when!(ctx), false)) continue;
@@ -171,7 +172,7 @@ function placeGuardrail(rt: RoadRuntime, chunk: RoadChunk, sampler: ChunkSampler
     for (let r = 0; r < n; r++) {
       const s = sOf(r);
       const p = sampler.point(s, xp);
-      let ok = rule.modes.includes(p.mode);
+      let ok = rule.modes.includes(p.mode) && !rt.isOpen(sg, s);
       if (ok) {
         const ctx = makeContext(rt, sampler, s, side, xp, r, ri, p);
         if (rule.when) ok = guard(() => rule.when!(ctx), false);
@@ -204,8 +205,8 @@ function placeGuardrail(rt: RoadRuntime, chunk: RoadChunk, sampler: ChunkSampler
       const touchesStart = a === 0, touchesEnd = b === n - 1;
       if (!touchesStart && !touchesEnd && sOf(b) - sOf(a) < rule.minRun) continue;
       let ra = a, rb = b;
-      if (!touchesStart) while (ra > 1 && sOf(a) - sOf(ra - 1) <= rule.pad) ra--;
-      if (!touchesEnd) while (rb < n - 2 && sOf(rb + 1) - sOf(b) <= rule.pad) rb++;
+      if (!touchesStart) while (ra > 1 && sOf(a) - sOf(ra - 1) <= rule.pad && !rt.isOpen(sg, sOf(ra - 1))) ra--;
+      if (!touchesEnd) while (rb < n - 2 && sOf(rb + 1) - sOf(b) <= rule.pad && !rt.isOpen(sg, sOf(rb + 1))) rb++;
       const startFree = !(ra === 0 && chunk.index > 0);
       const endFree = !(rb === n - 1 && chunk.index < rt.chunks.length - 1);
       const run: RailRun = {

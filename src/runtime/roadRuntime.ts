@@ -18,6 +18,7 @@ import { flipZ } from '../core/world';
 import { profileHeightAt, profileHeightInside, type ProfilePoint, type ProfileData } from '../profile/types';
 import { DEFAULT_BRIDGE, type BridgeData } from '../structures/types';
 import type { End } from '../network/graph';
+import type { EdgeOpening } from '../network/attach';
 
 export interface RoadRuntimeOptions {
   sample: SampleOptions;
@@ -133,6 +134,17 @@ export class RoadRuntime {
 
   /** the other roads of the same system (bridge piers keep clear of roads that pass underneath); set by the RoadSystem */
   siblings: () => readonly RoadRuntime[] = () => [];
+
+  /** stretches of the road's edge that stay open because a branch leaves or joins there (set by the RoadSystem, see attach.ts) */
+  openings: readonly EdgeOpening[] = [];
+  /** signature of the roads running under this road's bridges and of the openings: the road is rebuilt when it changes */
+  envKey = '';
+
+  /** is arc length s on `side` (+1 = right) inside an opening? */
+  isOpen(side: 1 | -1, s: number): boolean {
+    for (const o of this.openings) if (o.side === side && s >= o.s0 && s <= o.s1) return true;
+    return false;
+  }
 
   /** Design height at authored point k (falls back to its authored y until the chunk is built). */
   pointDesignY(k: number): number {

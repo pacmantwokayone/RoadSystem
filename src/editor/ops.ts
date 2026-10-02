@@ -2,7 +2,7 @@
 // compound edit — split a road, create a node, connect roads — is one undoable transaction).
 
 import type { SampledRoad } from '../core/sampling';
-import { DEFAULT_CORNER_RADIUS_M, DEFAULT_GREEN_S, type CrosswalkMode, type JunctionControl, type NodeDef, type RoadDef, type SignalMode } from '../network/types';
+import { DEFAULT_CORNER_RADIUS_M, DEFAULT_GREEN_S, type AttachDef, type CrosswalkMode, type JunctionControl, type NodeDef, type RoadDef, type SignalMode } from '../network/types';
 import type { End } from '../network/graph';
 import { simToThree } from '../core/world';
 import type { NetworkDraft } from './model';
@@ -47,11 +47,25 @@ export function splitRoad(d: NetworkDraft, roadId: string, sampled: SampledRoad,
     startNode: node.id,
     ...(road.endNode ? { endNode: road.endNode } : {}),
   };
+  // an attached head is computed from the parent: it stays attached only if the cut leaves it whole
+  const keepStart = !!road.attach && index >= road.attach.head;
+  const keepEnd = !!road.attachEnd && index <= road.points.length - road.attachEnd.head;
   d.editRoad(roadId, (r) => {
     r.points = [...r.points.slice(0, index).map((p) => ({ ...p })), { ...point }];
     r.endNode = node.id;
+    if (!keepStart) delete r.attach;
+    delete r.attachEnd;
   });
+  if (keepEnd) second.attachEnd = { ...road.attachEnd!, at: { ...road.attachEnd!.at } };
   d.setRoad(second);
+  // roads attached to this one follow the half their nose lies on
+  for (const child of d.roads) {
+    if (child.id === roadId) continue;
+    for (const key of ['attach', 'attachEnd'] as const) {
+      const a = child[key];
+      if (a?.road === roadId && a.s !== undefined && a.s > s) d.editRoad(child.id, (c) => { c[key]!.road = secondId; c[key]!.s = a.s! - s; });
+    }
+  }
   return node;
 }
 
@@ -170,4 +184,30 @@ export function findConnectTarget(
     consider(pr.distance, { kind: 'road', roadId: r.def.id, s: pr.s, sampled: r.sampled }, opts.roadSnapM);
   }
   return result();
+}
+
+// ---- attached roads (exits, ramps, switches) ---------------------------------------------
+
+export type AttachWhich = 'attach' | 'attachEnd';
+
+/** Changes parameters of an attachment; the head is recomputed by the network normalisation. */
+export function setAttach(d: NetworkDraft, roadId: string, which: AttachWhich, patch: Partial<Omit<AttachDef, 'road' | 'head' | 's' | 'len'>>): void {
+  d.editRoad(roadId, (r) => {
+    const a = r[which];
+    if (!a) return;
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined) delete (a as unknown as Record<string, unknown>)[k];
+      else (a as unknown as Record<string, unknown>)[k] = v;
+    }
+  });
+}
+
+/** Cuts the road loose from its parent: the head points stay as they are, as ordinary points. */
+export function detachRoad(d: NetworkDraft, roadId: string, which: AttachWhich): void {
+  d.editRoad(roadId, (r) => { delete r[which]; });
+}
+
+/** Is point `index` part of a computed head (it follows the parent and cannot be edited directly)? */
+export function isHeadIndex(r: Pick<RoadDef, 'points' | 'attach' | 'attachEnd'>, index: number): boolean {
+  return (!!r.attach && index < r.attach.head) || (!!r.attachEnd && index >= r.points.length - r.attachEnd.head);
 }
