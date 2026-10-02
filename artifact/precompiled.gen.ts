@@ -910,7 +910,7 @@ __bridge = (p, B) => B.bridge('Fachwerkbrücke')
 
 ;return { params: typeof params !== 'undefined' ? params : {}, build: __bridge };
 },
-  "B\n\"use strict\"; let __bridge;\n\n// Eisenbahnbrücke: Betontrog auf Pfeilerjochen (Schotterbett bleibt, Fahrleitungsmasten stehen auf dem Rand)\nconst params = {\n  maxSpan: { type: 'float', label: 'Max. Spannweite', min: 15, max: 70, step: 1, default: 36 },\n  box:     { type: 'float', label: 'Trägerhöhe', min: 0.8, max: 3, step: 0.1, default: 1.5 },\n};\n__bridge = (p, B) => B.bridge('Eisenbahnbrücke')\n  .deck({ thickness: p.box, material: 'concrete' })\n  .piers({ maxSpan: p.maxSpan, shape: 'wall', width: 3.2, depth: 1.6, taper: 0.25, cap: true, capHeight: 0.9, footing: 0.7, minHeight: 3 })\n  .abutments({ depth: 3, wing: 8 })\n  .railing('steel');\n\n;return { params: typeof params !== 'undefined' ? params : {}, build: __bridge };": function (B) {
+  "B\n\"use strict\"; let __bridge;\n\n// Eisenbahnbrücke: Betontrog auf Pfeilerjochen (Schotterbett bleibt, Fahrleitungsmasten stehen auf dem Rand)\nconst params = {\n  maxSpan: { type: 'float', label: 'Max. Spannweite', min: 15, max: 70, step: 1, default: 36 },\n  box:     { type: 'float', label: 'Trägerhöhe', min: 0.8, max: 3, step: 0.1, default: 1.5 },\n};\n__bridge = (p, B) => B.bridge('Eisenbahnbrücke')\n  .deck({ thickness: p.box, material: 'concrete' })\n  .piers({ maxSpan: p.maxSpan, shape: 'twin', width: 1.8, depth: 2.4, taper: 0.25, cap: true, capHeight: 0.9, footing: 0.7, minHeight: 3 })\n  .abutments({ depth: 3, wing: 8 })\n  .railing('steel');\n\n;return { params: typeof params !== 'undefined' ? params : {}, build: __bridge };": function (B) {
 "use strict"; let __bridge;
 
 // Eisenbahnbrücke: Betontrog auf Pfeilerjochen (Schotterbett bleibt, Fahrleitungsmasten stehen auf dem Rand)
@@ -920,9 +920,26 @@ const params = {
 };
 __bridge = (p, B) => B.bridge('Eisenbahnbrücke')
   .deck({ thickness: p.box, material: 'concrete' })
-  .piers({ maxSpan: p.maxSpan, shape: 'wall', width: 3.2, depth: 1.6, taper: 0.25, cap: true, capHeight: 0.9, footing: 0.7, minHeight: 3 })
+  .piers({ maxSpan: p.maxSpan, shape: 'twin', width: 1.8, depth: 2.4, taper: 0.25, cap: true, capHeight: 0.9, footing: 0.7, minHeight: 3 })
   .abutments({ depth: 3, wing: 8 })
   .railing('steel');
+
+;return { params: typeof params !== 'undefined' ? params : {}, build: __bridge };
+},
+  "B\n\"use strict\"; let __bridge;\n\n// Grossbogen: ein einziger weit gespannter Steinbogen über Fluss oder Schlucht. Keine Zwischenpfeiler: der ganze Abschnitt ist eine Spannweite.\nconst params = {\n  rise:     { type: 'float', label: 'Pfeilhöhe (Anteil der Spannweite)', min: 0.1, max: 0.45, step: 0.01, default: 0.3 },\n  ribWidth: { type: 'float', label: 'Rippenbreite', min: 1, max: 4, step: 0.1, default: 2.2 },\n  ribDepth: { type: 'float', label: 'Rippenstärke', min: 0.8, max: 3, step: 0.1, default: 1.8 },\n};\n__bridge = (p, B) => B.bridge('Grossbogen')\n  .deck({ thickness: 0.9, material: 'granite' })\n  .arch({ rise: p.rise, ribs: 2, ribWidth: p.ribWidth, ribDepth: p.ribDepth, spandrel: 'columns', spandrelSpacing: 8, spread: 0.72, material: 'granite' })\n  .abutments({ depth: 5, wing: 12, material: 'granite' })\n  .railing({ type: 'steel', height: 1.1 });\n\n;return { params: typeof params !== 'undefined' ? params : {}, build: __bridge };": function (B) {
+"use strict"; let __bridge;
+
+// Grossbogen: ein einziger weit gespannter Steinbogen über Fluss oder Schlucht. Keine Zwischenpfeiler: der ganze Abschnitt ist eine Spannweite.
+const params = {
+  rise:     { type: 'float', label: 'Pfeilhöhe (Anteil der Spannweite)', min: 0.1, max: 0.45, step: 0.01, default: 0.3 },
+  ribWidth: { type: 'float', label: 'Rippenbreite', min: 1, max: 4, step: 0.1, default: 2.2 },
+  ribDepth: { type: 'float', label: 'Rippenstärke', min: 0.8, max: 3, step: 0.1, default: 1.8 },
+};
+__bridge = (p, B) => B.bridge('Grossbogen')
+  .deck({ thickness: 0.9, material: 'granite' })
+  .arch({ rise: p.rise, ribs: 2, ribWidth: p.ribWidth, ribDepth: p.ribDepth, spandrel: 'columns', spandrelSpacing: 8, spread: 0.72, material: 'granite' })
+  .abutments({ depth: 5, wing: 12, material: 'granite' })
+  .railing({ type: 'steel', height: 1.1 });
 
 ;return { params: typeof params !== 'undefined' ? params : {}, build: __bridge };
 },
